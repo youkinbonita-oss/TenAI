@@ -41,3 +41,24 @@
 </div>
 </body>
 </html>
+<script>
+const button = document.querySelector("button");
+
+button.addEventListener("click", async () => {
+  const message = prompt("Ask TenAI anything:");
+
+  if (!message) return;
+
+  const response = await fetch("/api/chat", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ message })
+  });
+
+  const data = await response.json();
+
+  alert(data.reply);
+});
+</script>
