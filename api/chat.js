@@ -30,10 +30,10 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    const reply =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "Sorry, I couldn't answer.";
-
+    
+const reply =
+  data.candidates?.[0]?.content?.parts?.map(p => p.text).join("") ||
+  JSON.stringify(data);
     res.status(200).json({ reply });
   } catch (error) {
     res.status(500).json({ error: error.message });
