@@ -23,8 +23,8 @@ export default async function handler(req, res) {
 console.log(JSON.stringify(data, null, 2));
 
     const reply =
-      data.choices?.[0]?.message?.content ||
-      "Sorry, I couldn't generate a response.";
+  data.choices?.[0]?.message?.content ||
+  JSON.stringify(data);
 
     res.status(200).json({ reply });
 
