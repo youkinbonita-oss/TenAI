@@ -34,7 +34,7 @@ export default async function handler(req, res) {
       ...finalMessages
     ];
 
-    let data = null;
+    let upstreamResponse = null;
     let lastError = null;
 
     for (const model of FREE_MODELS) {
@@ -47,31 +47,49 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: model,
           messages: finalMessages,
-          max_tokens: 500
+          max_tokens: 500,
+          stream: true
         })
       });
 
-      const result = await response.json();
-
-      if (!result.error && result.choices?.[0]?.message?.content) {
-        data = result;
-        console.log("Used model:", model);
+      if (response.ok) {
+        upstreamResponse = response;
+        console.log("Streaming with model:", model);
         break;
       }
 
-      lastError = result.error?.message || "Unknown error";
+      const errJson = await response.json().catch(() => null);
+      lastError = errJson?.error?.message || `HTTP ${response.status}`;
       console.log(`Model ${model} failed:`, lastError);
     }
 
-    if (!data) {
+    if (!upstreamResponse) {
       return res.status(500).json({ error: "All models unavailable: " + lastError });
     }
 
-    const reply = data.choices[0].message.content;
-    res.status(200).json({ reply });
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive"
+    });
+
+    const reader = upstreamResponse.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(decoder.decode(value, { stream: true }));
+    }
+
+    res.end();
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    } else {
+      res.end();
+    }
   }
 }
