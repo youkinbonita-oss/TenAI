@@ -342,8 +342,14 @@ let isWaiting = false;
     if (!text || isWaiting) return;
 
     addMessage(text, 'user');
-    input.value = '';
-    autoResize();
+
+messages.push({
+  role: "user",
+  content: text
+});
+
+input.value = '';
+autoResize();
 
     isWaiting = true;
     sendBtn.disabled = true;
