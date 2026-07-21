@@ -14,25 +14,22 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "openrouter/free",
-       messages: messages
-
-          }
-        ]
+        messages: messages
       })
     });
 
-    
-const data = await response.json();
+    const data = await response.json();
 
-console.log("OPENROUTER RESPONSE:", JSON.stringify(data, null, 2));
-    
-const reply =
-  data.choices?.[0]?.message?.content ||
-  JSON.stringify(data);
+    console.log(data);
+
+    const reply =
+      data.choices?.[0]?.message?.content ||
+      "Sorry, I couldn't generate a response.";
 
     res.status(200).json({ reply });
 
   } catch (error) {
+    console.error(error);
     res.status(500).json({ error: error.message });
   }
 }
