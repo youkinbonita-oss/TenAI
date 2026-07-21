@@ -284,8 +284,95 @@
     border-top: 1px solid #2f2f2f;
     background: #212121;
     display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  #image-preview-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+
+  #image-preview-bar.visible {
+    display: flex;
+  }
+
+  #image-preview-thumb {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #3d3d3d;
+  }
+
+  #image-preview-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  #remove-image-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #3d3d3d;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  #remove-image-btn:hover {
+    background: #555;
+  }
+
+  #input-row {
+    display: flex;
     align-items: flex-end;
     gap: 10px;
+  }
+
+  #attach-btn {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: #2f2f2f;
+    color: #d4d4d4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #attach-btn:hover {
+    background: #3d3d3d;
+  }
+
+  #attach-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bubble-image {
+    max-width: 100%;
+    max-height: 260px;
+    border-radius: 12px;
+    display: block;
+    margin-bottom: 6px;
+    object-fit: cover;
   }
 
   #message-input {
@@ -403,13 +490,27 @@
     <div id="chat-window"></div>
 
     <div id="input-area">
-      <textarea id="message-input" placeholder="Message TenAI..." rows="1"></textarea>
-      <button id="send-btn" type="button" aria-label="Send">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-      </button>
+      <div id="image-preview-bar">
+        <div id="image-preview-thumb">
+          <img id="image-preview-img" src="" alt="Selected image preview">
+          <button id="remove-image-btn" type="button" aria-label="Remove image">✕</button>
+        </div>
+      </div>
+      <div id="input-row">
+        <button id="attach-btn" type="button" aria-label="Attach image">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+          </svg>
+        </button>
+        <input id="file-input" type="file" accept="image/*" style="display: none;">
+        <textarea id="message-input" placeholder="Message TenAI..." rows="1"></textarea>
+        <button id="send-btn" type="button" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -423,6 +524,13 @@
   const sidebar = document.getElementById('sidebar');
   const sidebarBackdrop = document.getElementById('sidebar-backdrop');
   const menuBtn = document.getElementById('menu-btn');
+  const attachBtn = document.getElementById('attach-btn');
+  const fileInput = document.getElementById('file-input');
+  const imagePreviewBar = document.getElementById('image-preview-bar');
+  const imagePreviewImg = document.getElementById('image-preview-img');
+  const removeImageBtn = document.getElementById('remove-image-btn');
+
+  let pendingImage = null; // base64 data URL of image staged for the next message
 
   const CONVERSATIONS_KEY = 'tenai_conversations';
   const ACTIVE_ID_KEY = 'tenai_active_id';
@@ -487,16 +595,20 @@
     return conversations[activeId] || null;
   }
 
-  function persistMessage(text, sender) {
+  function persistMessage(text, sender, image) {
     const conversations = loadConversations();
     const conv = conversations[activeId];
     if (!conv) return;
 
-    conv.messages.push({ text: text, sender: sender });
+    const entry = { text: text, sender: sender };
+    if (image) entry.image = image;
+
+    conv.messages.push(entry);
     conv.updatedAt = Date.now();
 
     if (conv.title === 'New Chat' && sender === 'user') {
-      conv.title = text.length > 30 ? text.slice(0, 30) + '...' : text;
+      const titleSource = text && text.length > 0 ? text : 'Image';
+      conv.title = titleSource.length > 30 ? titleSource.slice(0, 30) + '...' : titleSource;
     }
 
     conversations[activeId] = conv;
@@ -513,10 +625,18 @@
         return msg.text !== WELCOME_TEXT;
       })
       .map(function(msg) {
-        return {
-          role: msg.sender === 'ai' ? 'assistant' : 'user',
-          content: msg.text
-        };
+        const role = msg.sender === 'ai' ? 'assistant' : 'user';
+
+        if (msg.image) {
+          const parts = [];
+          if (msg.text) {
+            parts.push({ type: 'text', text: msg.text });
+          }
+          parts.push({ type: 'image_url', image_url: { url: msg.image } });
+          return { role: role, content: parts };
+        }
+
+        return { role: role, content: msg.text };
       });
   }
 
@@ -584,25 +704,38 @@
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  function createBubble(text, sender) {
+  function createBubble(text, sender, image) {
     const row = document.createElement('div');
     row.className = 'message-row ' + sender;
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.textContent = text;
+
+    if (image) {
+      const img = document.createElement('img');
+      img.className = 'bubble-image';
+      img.src = image;
+      img.alt = 'Uploaded image';
+      bubble.appendChild(img);
+    }
+
+    if (text) {
+      const textSpan = document.createElement('span');
+      textSpan.textContent = text;
+      bubble.appendChild(textSpan);
+    }
 
     row.appendChild(bubble);
     return { row: row, bubble: bubble };
   }
 
-  function addMessage(text, sender, skipPersist) {
-    const { row, bubble } = createBubble(text, sender);
+  function addMessage(text, sender, skipPersist, image) {
+    const { row, bubble } = createBubble(text, sender, image);
     chatWindow.appendChild(row);
     scrollToBottom();
 
     if (!skipPersist) {
-      persistMessage(text, sender);
+      persistMessage(text, sender, image);
     }
 
     return bubble;
@@ -611,7 +744,7 @@
   function renderChatWindow(messages) {
     chatWindow.innerHTML = '';
     messages.forEach(function(msg) {
-      const { row } = createBubble(msg.text, msg.sender);
+      const { row } = createBubble(msg.text, msg.sender, msg.image);
       chatWindow.appendChild(row);
     });
     scrollToBottom();
@@ -769,7 +902,7 @@
   }
 
   function updateSendBtnState() {
-    if (input.value.trim().length > 0 && !isWaiting) {
+    if ((input.value.trim().length > 0 || pendingImage) && !isWaiting) {
       sendBtn.classList.add('active');
     } else {
       sendBtn.classList.remove('active');
@@ -804,6 +937,35 @@
 
   sidebarBackdrop.addEventListener('click', closeSidebar);
 
+  // ---------- Image attach ----------
+
+  attachBtn.addEventListener('click', function() {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function() {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function() {
+      pendingImage = reader.result;
+      imagePreviewImg.src = pendingImage;
+      imagePreviewBar.classList.add('visible');
+      updateSendBtnState();
+    };
+    reader.readAsDataURL(file);
+
+    fileInput.value = '';
+  });
+
+  removeImageBtn.addEventListener('click', function() {
+    pendingImage = null;
+    imagePreviewImg.src = '';
+    imagePreviewBar.classList.remove('visible');
+    updateSendBtnState();
+  });
+
   // ---------- Sending messages (streaming) ----------
 
   input.addEventListener('input', function() {
@@ -813,11 +975,18 @@
 
   async function sendMessage() {
     const text = input.value.trim();
-    if (!text || isWaiting) return;
+    const imageToSend = pendingImage;
 
-    addMessage(text, 'user');
+    if (!text && !imageToSend) return;
+    if (isWaiting) return;
+
+    addMessage(text, 'user', false, imageToSend);
     input.value = '';
     autoResize();
+
+    pendingImage = null;
+    imagePreviewImg.src = '';
+    imagePreviewBar.classList.remove('visible');
 
     isWaiting = true;
     sendBtn.disabled = true;
