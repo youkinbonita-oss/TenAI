@@ -1,8 +1,30 @@
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "10mb"
+    }
+  }
+};
+
 const FREE_MODELS = [
   "openrouter/free",
   "openai/gpt-oss-120b:free",
   "meta-llama/llama-3.3-70b-instruct:free"
 ];
+
+const VISION_MODELS = [
+  "openrouter/free",
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free"
+];
+
+function messagesContainImage(messages) {
+  return messages.some(function(m) {
+    return Array.isArray(m.content) && m.content.some(function(part) {
+      return part.type === "image_url";
+    });
+  });
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -10,16 +32,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, messages } = req.body || {};
+    const { message, messages, image } = req.body || {};
 
     let finalMessages = Array.isArray(messages) ? messages : [];
 
-    finalMessages = finalMessages
-      .filter(m => m && typeof m.content === "string" && m.content.trim().length > 0)
-      .map(m => ({
+    finalMessages = finalMessages.filter(function(m) {
+      if (!m) return false;
+      if (typeof m.content === "string") return m.content.trim().length > 0;
+      if (Array.isArray(m.content)) return m.content.length > 0;
+      return false;
+    }).map(function(m) {
+      return {
         role: m.role === "ai" || m.role === "assistant" ? "assistant" : "user",
         content: m.content
-      }));
+      };
+    });
 
     if (finalMessages.length === 0 && typeof message === "string" && message.trim().length > 0) {
       finalMessages = [{ role: "user", content: message }];
@@ -29,15 +56,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No message content provided" });
     }
 
+    const hasImage = messagesContainImage(finalMessages) || typeof image === "string";
+
     finalMessages = [
-      { role: "system", content: "You are TenAI, a helpful assistant. Reply naturally and directly to the user's question." },
+      { role: "system", content: "You are TenAI, a helpful assistant. Reply naturally and directly to the user's question. If an image is provided, describe and answer questions about it accurately." },
       ...finalMessages
     ];
+
+    const modelList = hasImage ? VISION_MODELS : FREE_MODELS;
 
     let upstreamResponse = null;
     let lastError = null;
 
-    for (const model of FREE_MODELS) {
+    for (const model of modelList) {
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -47,14 +78,14 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           model: model,
           messages: finalMessages,
-          max_tokens: 500,
+          max_tokens: 600,
           stream: true
         })
       });
 
       if (response.ok) {
         upstreamResponse = response;
-        console.log("Streaming with model:", model);
+        console.log("Streaming with model:", model, hasImage ? "(vision)" : "(text)");
         break;
       }
 
