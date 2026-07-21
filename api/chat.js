@@ -4,7 +4,24 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { messages } = req.body;
+    const { message, messages } = req.body || {};
+
+    let finalMessages = Array.isArray(messages) ? messages : [];
+
+    finalMessages = finalMessages
+      .filter(m => m && typeof m.content === "string" && m.content.trim().length > 0)
+      .map(m => ({
+        role: m.role === "ai" || m.role === "assistant" ? "assistant" : "user",
+        content: m.content
+      }));
+
+    if (finalMessages.length === 0 && typeof message === "string" && message.trim().length > 0) {
+      finalMessages = [{ role: "user", content: message }];
+    }
+
+    if (finalMessages.length === 0) {
+      return res.status(400).json({ error: "No message content provided" });
+    }
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -14,17 +31,21 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "deepseek/deepseek-chat-v3-0324:free",
-        messages: messages
+        messages: finalMessages
       })
     });
 
     const data = await response.json();
 
-console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify(data, null, 2));
+
+    if (data.error) {
+      return res.status(500).json({ error: data.error.message || "OpenRouter error" });
+    }
 
     const reply =
-  data.choices?.[0]?.message?.content ||
-  JSON.stringify(data);
+      data.choices?.[0]?.message?.content ||
+      JSON.stringify(data);
 
     res.status(200).json({ reply });
 
