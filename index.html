@@ -15,44 +15,140 @@
     height: 100%;
     background: #212121;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
   }
 
-  #app {
+  #layout {
     display: flex;
-    flex-direction: column;
     height: 100vh;
     height: 100dvh;
-    max-width: 900px;
-    margin: 0 auto;
-    background: #212121;
+    width: 100%;
+  }
+
+  /* Sidebar */
+  #sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: #171717;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #2f2f2f;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 30;
+  }
+
+  #sidebar.open {
+    transform: translateX(0);
+  }
+
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 20;
+  }
+
+  #sidebar-backdrop.open {
+    display: block;
+  }
+
+  #new-chat-btn {
+    margin: 12px;
+    background: #2f6fed;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #new-chat-btn:hover {
+    background: #2660d1;
+  }
+
+  #conversation-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  #conversation-list::-webkit-scrollbar {
+    width: 6px;
+  }
+  #conversation-list::-webkit-scrollbar-thumb {
+    background: #3d3d3d;
+    border-radius: 4px;
+  }
+
+  .conversation-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: #d4d4d4;
+    font-size: 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conversation-item:hover {
+    background: #2a2a2a;
+  }
+
+  .conversation-item.active {
+    background: #2f2f2f;
+    color: #fff;
+  }
+
+  /* Main area */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-width: 0;
   }
 
   header {
-    padding: 16px 20px;
+    padding: 14px 16px;
     border-bottom: 1px solid #2f2f2f;
     color: #ececec;
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 600;
     flex-shrink: 0;
     background: #212121;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
   }
 
-  #new-chat-btn {
-    background: #2f6fed;
-    color: #fff;
+  #menu-btn {
+    background: none;
     border: none;
-    border-radius: 20px;
-    padding: 8px 16px;
-    font-size: 14px;
-    font-weight: 600;
+    color: #ececec;
     cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
   }
 
-  #new-chat-btn:hover {
-    background: #2660d1;
+  #menu-btn svg {
+    width: 22px;
+    height: 22px;
   }
 
   #chat-window {
@@ -202,6 +298,19 @@
     height: 20px;
   }
 
+  @media (min-width: 768px) {
+    #sidebar {
+      position: relative;
+      transform: none;
+    }
+    #sidebar-backdrop {
+      display: none !important;
+    }
+    #menu-btn {
+      display: none;
+    }
+  }
+
   @media (max-width: 600px) {
     header {
       padding: 14px 16px;
@@ -216,22 +325,43 @@
 </head>
 <body>
 
-<div id="app">
-  <header>
-    <span>TenAI</span>
-    <button id="new-chat-btn" type="button">New Chat</button>
-  </header>
+<div id="layout">
+  <div id="sidebar-backdrop"></div>
 
-  <div id="chat-window"></div>
-
-  <div id="input-area">
-    <textarea id="message-input" placeholder="Message TenAI..." rows="1"></textarea>
-    <button id="send-btn" type="button" aria-label="Send">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="22" y1="2" x2="11" y2="13"></line>
-        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+  <div id="sidebar">
+    <button id="new-chat-btn" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
       </svg>
+      New Chat
     </button>
+    <div id="conversation-list"></div>
+  </div>
+
+  <div id="main">
+    <header>
+      <button id="menu-btn" type="button" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+      <span>TenAI</span>
+    </header>
+
+    <div id="chat-window"></div>
+
+    <div id="input-area">
+      <textarea id="message-input" placeholder="Message TenAI..." rows="1"></textarea>
+      <button id="send-btn" type="button" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -240,44 +370,172 @@
   const input = document.getElementById('message-input');
   const sendBtn = document.getElementById('send-btn');
   const newChatBtn = document.getElementById('new-chat-btn');
+  const conversationList = document.getElementById('conversation-list');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  const menuBtn = document.getElementById('menu-btn');
 
-  const STORAGE_KEY = 'tenai_chat_history';
+  const CONVERSATIONS_KEY = 'tenai_conversations';
+  const ACTIVE_ID_KEY = 'tenai_active_id';
   const WELCOME_TEXT = "👋 Hi! I'm TenAI. How can I help you today?";
 
   let isWaiting = false;
+  let activeId = null;
 
-  function scrollToBottom() {
-    chatWindow.scrollTop = chatWindow.scrollHeight;
-  }
+  // ---------- Storage helpers ----------
 
-  function loadHistory() {
+  function loadConversations() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      const raw = localStorage.getItem(CONVERSATIONS_KEY);
+      return raw ? JSON.parse(raw) : {};
     } catch (err) {
-      return null;
+      return {};
     }
   }
 
-  function saveHistory(history) {
+  function saveConversations(conversations) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
     } catch (err) {
       // localStorage unavailable or full; fail silently
     }
   }
 
-  function getHistory() {
-    return loadHistory() || [];
+  function getActiveIdFromStorage() {
+    try {
+      return localStorage.getItem(ACTIVE_ID_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function setActiveIdInStorage(id) {
+    try {
+      localStorage.setItem(ACTIVE_ID_KEY, id);
+    } catch (err) {
+      // fail silently
+    }
+  }
+
+  function generateId() {
+    return 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function createNewConversationObject() {
+    const id = generateId();
+    return {
+      id: id,
+      title: 'New Chat',
+      messages: [{ text: WELCOME_TEXT, sender: 'ai' }],
+      updatedAt: Date.now()
+    };
+  }
+
+  // ---------- Conversation management ----------
+
+  function getActiveConversation() {
+    const conversations = loadConversations();
+    return conversations[activeId] || null;
   }
 
   function persistMessage(text, sender) {
-    const history = getHistory();
-    history.push({ text: text, sender: sender });
-    saveHistory(history);
+    const conversations = loadConversations();
+    const conv = conversations[activeId];
+    if (!conv) return;
+
+    conv.messages.push({ text: text, sender: sender });
+    conv.updatedAt = Date.now();
+
+    if (conv.title === 'New Chat' && sender === 'user') {
+      conv.title = text.length > 30 ? text.slice(0, 30) + '...' : text;
+    }
+
+    conversations[activeId] = conv;
+    saveConversations(conversations);
+    renderSidebar();
   }
 
-  function addMessage(text, sender, skipPersist) {
+  function buildMessagesForApi() {
+    const conv = getActiveConversation();
+    if (!conv) return [];
+
+    return conv.messages
+      .filter(function(msg) {
+        return msg.text !== WELCOME_TEXT;
+      })
+      .map(function(msg) {
+        return {
+          role: msg.sender === 'ai' ? 'assistant' : 'user',
+          content: msg.text
+        };
+      });
+  }
+
+  function startNewConversation() {
+    const conversations = loadConversations();
+    const newConv = createNewConversationObject();
+    conversations[newConv.id] = newConv;
+    saveConversations(conversations);
+
+    activeId = newConv.id;
+    setActiveIdInStorage(activeId);
+
+    renderChatWindow(newConv.messages);
+    renderSidebar();
+    closeSidebarOnMobile();
+  }
+
+  function switchToConversation(id) {
+    if (id === activeId) {
+      closeSidebarOnMobile();
+      return;
+    }
+
+    const conversations = loadConversations();
+    const conv = conversations[id];
+    if (!conv) return;
+
+    activeId = id;
+    setActiveIdInStorage(activeId);
+
+    renderChatWindow(conv.messages);
+    renderSidebar();
+    closeSidebarOnMobile();
+  }
+
+  function initConversations() {
+    const conversations = loadConversations();
+    let storedActiveId = getActiveIdFromStorage();
+
+    const ids = Object.keys(conversations);
+
+    if (ids.length === 0) {
+      const newConv = createNewConversationObject();
+      conversations[newConv.id] = newConv;
+      saveConversations(conversations);
+      activeId = newConv.id;
+      setActiveIdInStorage(activeId);
+    } else if (storedActiveId && conversations[storedActiveId]) {
+      activeId = storedActiveId;
+    } else {
+      ids.sort(function(a, b) {
+        return conversations[b].updatedAt - conversations[a].updatedAt;
+      });
+      activeId = ids[0];
+      setActiveIdInStorage(activeId);
+    }
+
+    renderChatWindow(conversations[activeId].messages);
+    renderSidebar();
+  }
+
+  // ---------- Rendering ----------
+
+  function scrollToBottom() {
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+
+  function createBubble(text, sender) {
     const row = document.createElement('div');
     row.className = 'message-row ' + sender;
 
@@ -286,6 +544,11 @@
     bubble.textContent = text;
 
     row.appendChild(bubble);
+    return { row: row, bubble: bubble };
+  }
+
+  function addMessage(text, sender, skipPersist) {
+    const { row, bubble } = createBubble(text, sender);
     chatWindow.appendChild(row);
     scrollToBottom();
 
@@ -296,16 +559,35 @@
     return bubble;
   }
 
-  function initChat() {
-    const history = loadHistory();
+  function renderChatWindow(messages) {
+    chatWindow.innerHTML = '';
+    messages.forEach(function(msg) {
+      const { row } = createBubble(msg.text, msg.sender);
+      chatWindow.appendChild(row);
+    });
+    scrollToBottom();
+  }
 
-    if (history && history.length > 0) {
-      history.forEach(function(msg) {
-        addMessage(msg.text, msg.sender, true);
+  function renderSidebar() {
+    const conversations = loadConversations();
+    const ids = Object.keys(conversations);
+
+    ids.sort(function(a, b) {
+      return conversations[b].updatedAt - conversations[a].updatedAt;
+    });
+
+    conversationList.innerHTML = '';
+
+    ids.forEach(function(id) {
+      const conv = conversations[id];
+      const item = document.createElement('div');
+      item.className = 'conversation-item' + (id === activeId ? ' active' : '');
+      item.textContent = conv.title;
+      item.addEventListener('click', function() {
+        switchToConversation(id);
       });
-    } else {
-      addMessage(WELCOME_TEXT, 'ai');
-    }
+      conversationList.appendChild(item);
+    });
   }
 
   function addThinkingBubble() {
@@ -340,23 +622,40 @@
     }
   }
 
+  // ---------- Sidebar open/close (mobile) ----------
+
+  function openSidebar() {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('open');
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('open');
+  }
+
+  function closeSidebarOnMobile() {
+    if (window.innerWidth < 768) {
+      closeSidebar();
+    }
+  }
+
+  menuBtn.addEventListener('click', function() {
+    if (sidebar.classList.contains('open')) {
+      closeSidebar();
+    } else {
+      openSidebar();
+    }
+  });
+
+  sidebarBackdrop.addEventListener('click', closeSidebar);
+
+  // ---------- Sending messages (streaming) ----------
+
   input.addEventListener('input', function() {
     autoResize();
     updateSendBtnState();
   });
-
-  function buildMessagesForApi() {
-    return getHistory()
-      .filter(function(msg) {
-        return msg.text !== WELCOME_TEXT;
-      })
-      .map(function(msg) {
-        return {
-          role: msg.sender === 'ai' ? 'assistant' : 'user',
-          content: msg.text
-        };
-      });
-  }
 
   async function sendMessage() {
     const text = input.value.trim();
@@ -453,13 +752,9 @@
     }
   });
 
-  newChatBtn.addEventListener('click', function() {
-    localStorage.removeItem(STORAGE_KEY);
-    chatWindow.innerHTML = '';
-    addMessage(WELCOME_TEXT, 'ai');
-  });
+  newChatBtn.addEventListener('click', startNewConversation);
 
-  initChat();
+  initConversations();
   updateSendBtnState();
   input.focus();
 </script>
