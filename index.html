@@ -95,14 +95,14 @@
   }
 
   .conversation-item {
-    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 8px 10px 12px;
     border-radius: 8px;
     color: #d4d4d4;
     font-size: 14px;
     cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .conversation-item:hover {
@@ -112,6 +112,55 @@
   .conversation-item.active {
     background: #2f2f2f;
     color: #fff;
+  }
+
+  .conversation-title {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .conversation-title-input {
+    flex: 1;
+    min-width: 0;
+    background: #1f1f1f;
+    border: 1px solid #4a4a4a;
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+    border-radius: 6px;
+    padding: 4px 6px;
+    outline: none;
+  }
+
+  .conv-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .conv-action-btn {
+    background: none;
+    border: none;
+    color: #9b9b9b;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .conv-action-btn:hover {
+    background: #3d3d3d;
+    color: #fff;
+  }
+
+  .conv-action-btn svg {
+    width: 15px;
+    height: 15px;
   }
 
   /* Main area */
@@ -568,6 +617,44 @@
     scrollToBottom();
   }
 
+  function renameConversation(id, newTitle) {
+    const conversations = loadConversations();
+    const conv = conversations[id];
+    if (!conv) return;
+
+    const trimmed = newTitle.trim();
+    conv.title = trimmed.length > 0 ? trimmed : 'New Chat';
+    conversations[id] = conv;
+    saveConversations(conversations);
+    renderSidebar();
+  }
+
+  function deleteConversation(id) {
+    const conversations = loadConversations();
+    delete conversations[id];
+    saveConversations(conversations);
+
+    const remainingIds = Object.keys(conversations);
+
+    if (remainingIds.length === 0) {
+      const newConv = createNewConversationObject();
+      conversations[newConv.id] = newConv;
+      saveConversations(conversations);
+      activeId = newConv.id;
+      setActiveIdInStorage(activeId);
+      renderChatWindow(newConv.messages);
+    } else if (id === activeId) {
+      remainingIds.sort(function(a, b) {
+        return conversations[b].updatedAt - conversations[a].updatedAt;
+      });
+      activeId = remainingIds[0];
+      setActiveIdInStorage(activeId);
+      renderChatWindow(conversations[activeId].messages);
+    }
+
+    renderSidebar();
+  }
+
   function renderSidebar() {
     const conversations = loadConversations();
     const ids = Object.keys(conversations);
@@ -582,12 +669,79 @@
       const conv = conversations[id];
       const item = document.createElement('div');
       item.className = 'conversation-item' + (id === activeId ? ' active' : '');
-      item.textContent = conv.title;
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'conversation-title';
+      titleSpan.textContent = conv.title;
+
+      item.appendChild(titleSpan);
+
+      const actions = document.createElement('div');
+      actions.className = 'conv-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'conv-action-btn';
+      editBtn.setAttribute('aria-label', 'Rename conversation');
+      editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'conv-action-btn';
+      deleteBtn.setAttribute('aria-label', 'Delete conversation');
+      deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      item.appendChild(actions);
+
       item.addEventListener('click', function() {
         switchToConversation(id);
       });
+
+      editBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        startInlineRename(item, titleSpan, id, conv.title);
+      });
+
+      deleteBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        deleteConversation(id);
+      });
+
       conversationList.appendChild(item);
     });
+  }
+
+  function startInlineRename(item, titleSpan, id, currentTitle) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'conversation-title-input';
+    input.value = currentTitle;
+
+    item.replaceChild(input, titleSpan);
+    input.focus();
+    input.select();
+
+    function commit() {
+      renameConversation(id, input.value);
+    }
+
+    input.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
+
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        renderSidebar();
+      }
+    });
+
+    input.addEventListener('blur', commit);
   }
 
   function addThinkingBubble() {
