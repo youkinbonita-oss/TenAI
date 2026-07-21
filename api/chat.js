@@ -13,7 +13,7 @@ export default async function handler(req, res) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "google/gemma-3-4b-it:free",
+        model: "openrouter/free",
         messages: [
           {
             role: "user",
