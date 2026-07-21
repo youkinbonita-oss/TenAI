@@ -199,7 +199,20 @@
 <body>
 
 <div id="app">
-  <header>TenAI</header>
+  <header style="display:flex;justify-content:space-between;align-items:center;">
+  <span>TenAI</span>
+
+  <button id="new-chat-btn" style="
+    background:#2f6fed;
+    color:white;
+    border:none;
+    padding:8px 14px;
+    border-radius:8px;
+    cursor:pointer;
+  ">
+    New Chat
+  </button>
+</header>
 
   <div id="chat-window"></div>
 
@@ -222,7 +235,8 @@
   const STORAGE_KEY = 'tenai_chat_history';
   const WELCOME_TEXT = "👋 Hi! I'm TenAI. How can I help you today?";
 
-  let isWaiting = false;
+  let messages = [];
+let isWaiting = false;
 
   function scrollToBottom() {
     chatWindow.scrollTop = chatWindow.scrollHeight;
@@ -342,7 +356,10 @@
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({
+  message: text,
+  messages: messages
+})
       });
 
       if (!response.ok) {
@@ -375,6 +392,11 @@
   initChat();
   updateSendBtnState();
   input.focus();
+
+document.getElementById("new-chat-btn").addEventListener("click", () => {
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
+});
 </script>
 
 </body>
