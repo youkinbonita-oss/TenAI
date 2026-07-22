@@ -974,11 +974,15 @@
   });
 
   async function sendMessage() {
-    const text = input.value.trim();
+    let text = input.value.trim();
     const imageToSend = pendingImage;
 
     if (!text && !imageToSend) return;
     if (isWaiting) return;
+
+    if (!text && imageToSend) {
+      text = 'Please describe what is in this image.';
+    }
 
     addMessage(text, 'user', false, imageToSend);
     input.value = '';
