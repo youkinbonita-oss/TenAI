@@ -366,6 +366,47 @@
     height: 20px;
   }
 
+  #mic-btn {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: #2f2f2f;
+    color: #d4d4d4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  #mic-btn:hover {
+    background: #3d3d3d;
+  }
+
+  #mic-btn.recording {
+    background: #e5484d;
+    color: #fff;
+    animation: mic-pulse 1.4s infinite;
+  }
+
+  #mic-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  #mic-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  @keyframes mic-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5); }
+    70% { box-shadow: 0 0 0 10px rgba(229, 72, 77, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0); }
+  }
+
   .bubble-image {
     max-width: 100%;
     max-height: 260px;
@@ -557,6 +598,14 @@
           </svg>
         </button>
         <input id="file-input" type="file" accept="image/*" style="display: none;">
+        <button id="mic-btn" type="button" aria-label="Voice input">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+        </button>
         <textarea id="message-input" placeholder="Message TenAI..." rows="1"></textarea>
         <button id="send-btn" type="button" aria-label="Send">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -589,6 +638,7 @@
   const sidebarBackdrop = document.getElementById('sidebar-backdrop');
   const menuBtn = document.getElementById('menu-btn');
   const attachBtn = document.getElementById('attach-btn');
+  const micBtn = document.getElementById('mic-btn');
   const fileInput = document.getElementById('file-input');
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
@@ -1213,6 +1263,93 @@
     });
 
     fileInput.value = '';
+  });
+
+  // ---------- Voice input ----------
+  // Uses the browser's built-in Web Speech API (free, no external service,
+  // doesn't touch the OpenRouter quota). Supported in Chrome/Edge/Safari;
+  // the button is disabled with a tooltip on browsers without support.
+
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let isRecording = false;
+  let baseTextBeforeRecording = '';
+
+  if (SpeechRecognitionAPI) {
+    recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || 'en-US';
+
+    recognition.onresult = function(event) {
+      let finalTranscript = '';
+      let interimTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      const separator = baseTextBeforeRecording && !baseTextBeforeRecording.endsWith(' ') ? ' ' : '';
+      input.value = baseTextBeforeRecording + separator + finalTranscript + interimTranscript;
+
+      if (finalTranscript) {
+        baseTextBeforeRecording = input.value.trim();
+      }
+
+      autoResize();
+      updateSendBtnState();
+    };
+
+    recognition.onerror = function(event) {
+      console.warn('Speech recognition error:', event.error);
+      stopRecording();
+    };
+
+    recognition.onend = function() {
+      stopRecording();
+    };
+  } else {
+    micBtn.disabled = true;
+    micBtn.title = 'Voice input is not supported in this browser';
+  }
+
+  function startRecording() {
+    if (!recognition || isRecording) return;
+    baseTextBeforeRecording = input.value.trim();
+    isRecording = true;
+    micBtn.classList.add('recording');
+    try {
+      recognition.start();
+    } catch (err) {
+      console.warn('Could not start speech recognition:', err);
+      stopRecording();
+    }
+  }
+
+  function stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    micBtn.classList.remove('recording');
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (err) {
+        // already stopped
+      }
+    }
+  }
+
+  micBtn.addEventListener('click', function() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
   });
 
   removeImageBtn.addEventListener('click', function() {
