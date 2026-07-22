@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -538,10 +539,11 @@
 
   let isWaiting = false;
   let activeId = null;
+  let conversationsCache = {}; // in-memory source of truth; localStorage is best-effort backup
 
   // ---------- Storage helpers ----------
 
-  function loadConversations() {
+  function loadConversationsFromStorage() {
     try {
       const raw = localStorage.getItem(CONVERSATIONS_KEY);
       return raw ? JSON.parse(raw) : {};
@@ -550,11 +552,14 @@
     }
   }
 
-  function saveConversations(conversations) {
+  function persistToStorage() {
     try {
-      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
+      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversationsCache));
     } catch (err) {
-      // localStorage unavailable or full; fail silently
+      // localStorage quota exceeded or unavailable. conversationsCache (in-memory)
+      // remains the source of truth for this session, so the current chat still
+      // works correctly even if this particular save didn't persist to disk.
+      console.warn('Could not save conversations to localStorage:', err);
     }
   }
 
@@ -588,16 +593,53 @@
     };
   }
 
+  // ---------- Image compression ----------
+  // Phone camera photos are often several MB as base64, which can exceed
+  // localStorage's quota and bloat the request. Resize + re-encode as JPEG
+  // before we ever store or send it.
+
+  function compressImage(file) {
+    return new Promise(function(resolve, reject) {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = function() {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = function() {
+          const MAX_DIMENSION = 1280;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > MAX_DIMENSION) {
+            height = Math.round(height * (MAX_DIMENSION / width));
+            width = MAX_DIMENSION;
+          } else if (height > MAX_DIMENSION) {
+            width = Math.round(width * (MAX_DIMENSION / height));
+            height = MAX_DIMENSION;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          resolve(canvas.toDataURL('image/jpeg', 0.72));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   // ---------- Conversation management ----------
 
   function getActiveConversation() {
-    const conversations = loadConversations();
-    return conversations[activeId] || null;
+    return conversationsCache[activeId] || null;
   }
 
   function persistMessage(text, sender, image) {
-    const conversations = loadConversations();
-    const conv = conversations[activeId];
+    const conv = conversationsCache[activeId];
     if (!conv) return;
 
     const entry = { text: text, sender: sender };
@@ -611,8 +653,7 @@
       conv.title = titleSource.length > 30 ? titleSource.slice(0, 30) + '...' : titleSource;
     }
 
-    conversations[activeId] = conv;
-    saveConversations(conversations);
+    persistToStorage();
     renderSidebar();
   }
 
@@ -641,10 +682,9 @@
   }
 
   function startNewConversation() {
-    const conversations = loadConversations();
     const newConv = createNewConversationObject();
-    conversations[newConv.id] = newConv;
-    saveConversations(conversations);
+    conversationsCache[newConv.id] = newConv;
+    persistToStorage();
 
     activeId = newConv.id;
     setActiveIdInStorage(activeId);
@@ -660,8 +700,7 @@
       return;
     }
 
-    const conversations = loadConversations();
-    const conv = conversations[id];
+    const conv = conversationsCache[id];
     if (!conv) return;
 
     activeId = id;
@@ -673,28 +712,28 @@
   }
 
   function initConversations() {
-    const conversations = loadConversations();
+    conversationsCache = loadConversationsFromStorage();
     let storedActiveId = getActiveIdFromStorage();
 
-    const ids = Object.keys(conversations);
+    const ids = Object.keys(conversationsCache);
 
     if (ids.length === 0) {
       const newConv = createNewConversationObject();
-      conversations[newConv.id] = newConv;
-      saveConversations(conversations);
+      conversationsCache[newConv.id] = newConv;
+      persistToStorage();
       activeId = newConv.id;
       setActiveIdInStorage(activeId);
-    } else if (storedActiveId && conversations[storedActiveId]) {
+    } else if (storedActiveId && conversationsCache[storedActiveId]) {
       activeId = storedActiveId;
     } else {
       ids.sort(function(a, b) {
-        return conversations[b].updatedAt - conversations[a].updatedAt;
+        return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
       });
       activeId = ids[0];
       setActiveIdInStorage(activeId);
     }
 
-    renderChatWindow(conversations[activeId].messages);
+    renderChatWindow(conversationsCache[activeId].messages);
     renderSidebar();
   }
 
@@ -751,55 +790,51 @@
   }
 
   function renameConversation(id, newTitle) {
-    const conversations = loadConversations();
-    const conv = conversations[id];
+    const conv = conversationsCache[id];
     if (!conv) return;
 
     const trimmed = newTitle.trim();
     conv.title = trimmed.length > 0 ? trimmed : 'New Chat';
-    conversations[id] = conv;
-    saveConversations(conversations);
+    persistToStorage();
     renderSidebar();
   }
 
   function deleteConversation(id) {
-    const conversations = loadConversations();
-    delete conversations[id];
-    saveConversations(conversations);
+    delete conversationsCache[id];
+    persistToStorage();
 
-    const remainingIds = Object.keys(conversations);
+    const remainingIds = Object.keys(conversationsCache);
 
     if (remainingIds.length === 0) {
       const newConv = createNewConversationObject();
-      conversations[newConv.id] = newConv;
-      saveConversations(conversations);
+      conversationsCache[newConv.id] = newConv;
+      persistToStorage();
       activeId = newConv.id;
       setActiveIdInStorage(activeId);
       renderChatWindow(newConv.messages);
     } else if (id === activeId) {
       remainingIds.sort(function(a, b) {
-        return conversations[b].updatedAt - conversations[a].updatedAt;
+        return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
       });
       activeId = remainingIds[0];
       setActiveIdInStorage(activeId);
-      renderChatWindow(conversations[activeId].messages);
+      renderChatWindow(conversationsCache[activeId].messages);
     }
 
     renderSidebar();
   }
 
   function renderSidebar() {
-    const conversations = loadConversations();
-    const ids = Object.keys(conversations);
+    const ids = Object.keys(conversationsCache);
 
     ids.sort(function(a, b) {
-      return conversations[b].updatedAt - conversations[a].updatedAt;
+      return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
     });
 
     conversationList.innerHTML = '';
 
     ids.forEach(function(id) {
-      const conv = conversations[id];
+      const conv = conversationsCache[id];
       const item = document.createElement('div');
       item.className = 'conversation-item' + (id === activeId ? ' active' : '');
 
@@ -947,14 +982,14 @@
     const file = fileInput.files && fileInput.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = function() {
-      pendingImage = reader.result;
+    compressImage(file).then(function(dataUrl) {
+      pendingImage = dataUrl;
       imagePreviewImg.src = pendingImage;
       imagePreviewBar.classList.add('visible');
       updateSendBtnState();
-    };
-    reader.readAsDataURL(file);
+    }).catch(function(err) {
+      console.error('Image processing failed:', err);
+    });
 
     fileInput.value = '';
   });
