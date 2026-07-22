@@ -13,9 +13,9 @@ const FREE_MODELS = [
 ];
 
 const VISION_MODELS = [
-  "openrouter/free",
   "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free"
+  "google/gemma-4-26b-a4b-it:free",
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 ];
 
 function messagesContainImage(messages) {
@@ -59,7 +59,7 @@ export default async function handler(req, res) {
     const hasImage = messagesContainImage(finalMessages) || typeof image === "string";
 
     finalMessages = [
-      { role: "system", content: "You are TenAI, a helpful assistant. Reply naturally and directly to the user's question. If an image is provided, describe and answer questions about it accurately." },
+      { role: "system", content: "You are TenAI, a helpful assistant. Always reply in natural conversational language, never in a labeled or classifier-style format such as 'User Safety: safe'. When an image is provided, immediately describe what is in the image in plain language, then answer any question the user asked about it." },
       ...finalMessages
     ];
 
