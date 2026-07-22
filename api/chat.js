@@ -18,11 +18,11 @@ const VISION_MODELS = [
   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 ];
 
-function messagesContainImage(messages) {
-  return messages.some(function(m) {
-    return Array.isArray(m.content) && m.content.some(function(part) {
-      return part.type === "image_url";
-    });
+function lastMessageHasImage(messages) {
+  if (messages.length === 0) return false;
+  const last = messages[messages.length - 1];
+  return Array.isArray(last.content) && last.content.some(function(part) {
+    return part.type === "image_url";
   });
 }
 
@@ -56,7 +56,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No message content provided" });
     }
 
-    const hasImage = messagesContainImage(finalMessages) || typeof image === "string";
+    const hasImage = lastMessageHasImage(finalMessages) || typeof image === "string";
 
     finalMessages = [
       { role: "system", content: "You are TenAI, a helpful assistant. Always reply in natural conversational language, never in a labeled or classifier-style format such as 'User Safety: safe'. When an image is provided, immediately describe what is in the image in plain language, then answer any question the user asked about it." },
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             model: model,
             messages: finalMessages,
-            max_tokens: 600
+            max_tokens: 450
           })
         });
 
