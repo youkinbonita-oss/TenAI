@@ -1013,6 +1013,18 @@
         throw new Error('Request failed with status ' + response.status);
       }
 
+      const contentType = response.headers.get('Content-Type') || '';
+
+      if (contentType.includes('application/json')) {
+        // Non-streaming reply (used for image requests)
+        const data = await response.json();
+        removeThinkingBubble();
+        accumulated = data.reply || '(No reply received)';
+        addMessage(accumulated, 'ai', true);
+        persistMessage(accumulated, 'ai');
+        return;
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
