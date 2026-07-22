@@ -65,6 +65,46 @@ export default async function handler(req, res) {
 
     const modelList = hasImage ? VISION_MODELS : FREE_MODELS;
 
+    // Many free vision providers on OpenRouter silently drop image data when
+    // stream:true is combined with image_url content. Image requests are sent
+    // non-streaming to guarantee the image actually reaches the model.
+    if (hasImage) {
+      let data = null;
+      let lastError = null;
+
+      for (const model of modelList) {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: finalMessages,
+            max_tokens: 600
+          })
+        });
+
+        const result = await response.json();
+
+        if (!result.error && result.choices?.[0]?.message?.content) {
+          data = result;
+          console.log("Used vision model (non-streaming):", model);
+          break;
+        }
+
+        lastError = result.error?.message || "Unknown error";
+        console.log(`Vision model ${model} failed:`, lastError);
+      }
+
+      if (!data) {
+        return res.status(500).json({ error: "All vision models unavailable: " + lastError });
+      }
+
+      return res.status(200).json({ reply: data.choices[0].message.content });
+    }
+
     let upstreamResponse = null;
     let lastError = null;
 
@@ -85,7 +125,7 @@ export default async function handler(req, res) {
 
       if (response.ok) {
         upstreamResponse = response;
-        console.log("Streaming with model:", model, hasImage ? "(vision)" : "(text)");
+        console.log("Streaming with model:", model, "(text)");
         break;
       }
 
