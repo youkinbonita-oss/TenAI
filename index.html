@@ -599,34 +599,88 @@
 
   let pendingImage = null; // base64 data URL of image staged for the next message
 
-  const CONVERSATIONS_KEY = 'tenai_conversations';
   const ACTIVE_ID_KEY = 'tenai_active_id';
   const WELCOME_TEXT = "👋 Hi! I'm TenAI. How can I help you today?";
+  const DB_NAME = 'tenai_db';
+  const DB_VERSION = 1;
+  const STORE_NAME = 'conversations';
 
   let isWaiting = false;
   let activeId = null;
-  let conversationsCache = {}; // in-memory source of truth; localStorage is best-effort backup
+  let conversationsCache = {}; // in-memory source of truth, kept in sync with IndexedDB
 
-  // ---------- Storage helpers ----------
+  // ---------- Storage helpers (IndexedDB) ----------
+  // IndexedDB is used instead of localStorage because image-containing
+  // conversations can be several MB, well past localStorage's ~5-10MB quota.
+  // Each conversation is stored as its own record, so one large chat growing
+  // doesn't risk the save of every other chat.
 
-  function loadConversationsFromStorage() {
-    try {
-      const raw = localStorage.getItem(CONVERSATIONS_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch (err) {
-      return {};
-    }
+  let dbInstance = null;
+
+  function openDB() {
+    return new Promise(function(resolve, reject) {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB not available'));
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = function(e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = function(e) { resolve(e.target.result); };
+      request.onerror = function(e) { reject(e.target.error); };
+    });
   }
 
-  function persistToStorage() {
-    try {
-      localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversationsCache));
-    } catch (err) {
-      // localStorage quota exceeded or unavailable. conversationsCache (in-memory)
-      // remains the source of truth for this session, so the current chat still
-      // works correctly even if this particular save didn't persist to disk.
-      console.warn('Could not save conversations to localStorage:', err);
-    }
+  function getDB() {
+    if (dbInstance) return Promise.resolve(dbInstance);
+    return openDB().then(function(db) {
+      dbInstance = db;
+      return db;
+    });
+  }
+
+  function dbGetAllConversations() {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).getAll();
+        req.onsuccess = function() { resolve(req.result || []); };
+        req.onerror = function() { reject(req.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not load conversations from IndexedDB:', err);
+      return [];
+    });
+  }
+
+  function dbSaveConversation(conv) {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(conv);
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function() { reject(tx.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not save conversation to IndexedDB:', err);
+    });
+  }
+
+  function dbDeleteConversation(id) {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(id);
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function() { reject(tx.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not delete conversation from IndexedDB:', err);
+    });
   }
 
   function getActiveIdFromStorage() {
@@ -641,7 +695,7 @@
     try {
       localStorage.setItem(ACTIVE_ID_KEY, id);
     } catch (err) {
-      // fail silently
+      // fail silently — active id is just a convenience pointer
     }
   }
 
@@ -660,9 +714,8 @@
   }
 
   // ---------- Image compression ----------
-  // Phone camera photos are often several MB as base64, which can exceed
-  // localStorage's quota and bloat the request. Resize + re-encode as JPEG
-  // before we ever store or send it.
+  // Phone camera photos are often several MB as base64. Resize + re-encode as
+  // JPEG before storing/sending, both for faster uploads and a smaller payload.
 
   function compressImage(file) {
     return new Promise(function(resolve, reject) {
@@ -719,7 +772,7 @@
       conv.title = titleSource.length > 30 ? titleSource.slice(0, 30) + '...' : titleSource;
     }
 
-    persistToStorage();
+    dbSaveConversation(conv);
     renderSidebar();
   }
 
@@ -750,7 +803,7 @@
   function startNewConversation() {
     const newConv = createNewConversationObject();
     conversationsCache[newConv.id] = newConv;
-    persistToStorage();
+    dbSaveConversation(newConv);
 
     activeId = newConv.id;
     setActiveIdInStorage(activeId);
@@ -778,29 +831,34 @@
   }
 
   function initConversations() {
-    conversationsCache = loadConversationsFromStorage();
-    let storedActiveId = getActiveIdFromStorage();
-
-    const ids = Object.keys(conversationsCache);
-
-    if (ids.length === 0) {
-      const newConv = createNewConversationObject();
-      conversationsCache[newConv.id] = newConv;
-      persistToStorage();
-      activeId = newConv.id;
-      setActiveIdInStorage(activeId);
-    } else if (storedActiveId && conversationsCache[storedActiveId]) {
-      activeId = storedActiveId;
-    } else {
-      ids.sort(function(a, b) {
-        return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
+    return dbGetAllConversations().then(function(records) {
+      conversationsCache = {};
+      records.forEach(function(conv) {
+        conversationsCache[conv.id] = conv;
       });
-      activeId = ids[0];
-      setActiveIdInStorage(activeId);
-    }
 
-    renderChatWindow(conversationsCache[activeId].messages);
-    renderSidebar();
+      let storedActiveId = getActiveIdFromStorage();
+      const ids = Object.keys(conversationsCache);
+
+      if (ids.length === 0) {
+        const newConv = createNewConversationObject();
+        conversationsCache[newConv.id] = newConv;
+        dbSaveConversation(newConv);
+        activeId = newConv.id;
+        setActiveIdInStorage(activeId);
+      } else if (storedActiveId && conversationsCache[storedActiveId]) {
+        activeId = storedActiveId;
+      } else {
+        ids.sort(function(a, b) {
+          return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
+        });
+        activeId = ids[0];
+        setActiveIdInStorage(activeId);
+      }
+
+      renderChatWindow(conversationsCache[activeId].messages);
+      renderSidebar();
+    });
   }
 
   // ---------- Rendering ----------
@@ -864,20 +922,20 @@
 
     const trimmed = newTitle.trim();
     conv.title = trimmed.length > 0 ? trimmed : 'New Chat';
-    persistToStorage();
+    dbSaveConversation(conv);
     renderSidebar();
   }
 
   function deleteConversation(id) {
     delete conversationsCache[id];
-    persistToStorage();
+    dbDeleteConversation(id);
 
     const remainingIds = Object.keys(conversationsCache);
 
     if (remainingIds.length === 0) {
       const newConv = createNewConversationObject();
       conversationsCache[newConv.id] = newConv;
-      persistToStorage();
+      dbSaveConversation(newConv);
       activeId = newConv.id;
       setActiveIdInStorage(activeId);
       renderChatWindow(newConv.messages);
