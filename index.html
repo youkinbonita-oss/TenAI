@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -374,6 +373,60 @@
     display: block;
     margin-bottom: 6px;
     object-fit: cover;
+    cursor: pointer;
+  }
+
+  /* Lightbox */
+  #lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.92);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  #lightbox.open {
+    display: flex;
+  }
+
+  #lightbox-img {
+    max-width: 92vw;
+    max-height: 92vh;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    will-change: transform;
+    transform-origin: center center;
+  }
+
+  #lightbox-close {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: 16px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 101;
+  }
+
+  #lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  #lightbox-close svg {
+    width: 22px;
+    height: 22px;
   }
 
   #message-input {
@@ -516,6 +569,16 @@
   </div>
 </div>
 
+<div id="lightbox">
+  <button id="lightbox-close" type="button" aria-label="Close image viewer">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18"></line>
+      <line x1="6" y1="6" x2="18" y2="18"></line>
+    </svg>
+  </button>
+  <img id="lightbox-img" src="" alt="Full size image">
+</div>
+
 <script>
   const chatWindow = document.getElementById('chat-window');
   const input = document.getElementById('message-input');
@@ -530,6 +593,9 @@
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
   const removeImageBtn = document.getElementById('remove-image-btn');
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = document.getElementById('lightbox-img');
+  const lightboxClose = document.getElementById('lightbox-close');
 
   let pendingImage = null; // base64 data URL of image staged for the next message
 
@@ -755,6 +821,9 @@
       img.className = 'bubble-image';
       img.src = image;
       img.alt = 'Uploaded image';
+      img.addEventListener('click', function() {
+        openLightbox(image);
+      });
       bubble.appendChild(img);
     }
 
@@ -943,6 +1012,100 @@
       sendBtn.classList.remove('active');
     }
   }
+
+  // ---------- Image lightbox ----------
+
+  let lbScale = 1;
+  let lbTranslateX = 0;
+  let lbTranslateY = 0;
+  let lbStartDistance = 0;
+  let lbStartScale = 1;
+  let lbPanning = false;
+  let lbLastX = 0;
+  let lbLastY = 0;
+
+  function applyLightboxTransform() {
+    lightboxImg.style.transform =
+      'translate(' + lbTranslateX + 'px, ' + lbTranslateY + 'px) scale(' + lbScale + ')';
+  }
+
+  function resetLightboxTransform() {
+    lbScale = 1;
+    lbTranslateX = 0;
+    lbTranslateY = 0;
+    applyLightboxTransform();
+  }
+
+  function openLightbox(src) {
+    lightboxImg.src = src;
+    resetLightboxTransform();
+    lightbox.classList.add('open');
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    lightboxImg.src = '';
+    resetLightboxTransform();
+  }
+
+  function touchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  lightboxClose.addEventListener('click', closeLightbox);
+
+  lightbox.addEventListener('click', function(e) {
+    if (e.target === lightbox) {
+      closeLightbox();
+    }
+  });
+
+  lightboxImg.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 2) {
+      lbStartDistance = touchDistance(e.touches);
+      lbStartScale = lbScale;
+      lbPanning = false;
+    } else if (e.touches.length === 1 && lbScale > 1) {
+      lbPanning = true;
+      lbLastX = e.touches[0].clientX;
+      lbLastY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  lightboxImg.addEventListener('touchmove', function(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const newDistance = touchDistance(e.touches);
+      let newScale = lbStartScale * (newDistance / lbStartDistance);
+      newScale = Math.min(Math.max(newScale, 1), 4);
+      lbScale = newScale;
+      applyLightboxTransform();
+    } else if (e.touches.length === 1 && lbPanning) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - lbLastX;
+      const dy = e.touches[0].clientY - lbLastY;
+      lbLastX = e.touches[0].clientX;
+      lbLastY = e.touches[0].clientY;
+      lbTranslateX += dx;
+      lbTranslateY += dy;
+      applyLightboxTransform();
+    }
+  }, { passive: false });
+
+  lightboxImg.addEventListener('touchend', function(e) {
+    lbPanning = false;
+    if (lbScale <= 1) {
+      resetLightboxTransform();
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && lightbox.classList.contains('open')) {
+      closeLightbox();
+    }
+  });
 
   // ---------- Sidebar open/close (mobile) ----------
 
