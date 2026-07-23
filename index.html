@@ -486,18 +486,28 @@
     cursor: pointer;
   }
 
-  .speaker-btn {
-    display: block;
+  .message-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     margin-top: 6px;
+  }
+
+  .speaker-btn,
+  .copy-btn {
     background: none;
     border: none;
     color: #9b9b9b;
     cursor: pointer;
     padding: 3px;
     border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  .speaker-btn:hover {
+  .speaker-btn:hover,
+  .copy-btn:hover {
     background: #3d3d3d;
     color: #fff;
   }
@@ -506,15 +516,29 @@
     color: #2f6fed;
   }
 
-  .speaker-btn:disabled {
+  .speaker-btn:disabled,
+  .copy-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
   }
 
-  .speaker-btn svg {
+  .speaker-btn svg,
+  .copy-btn svg {
     width: 15px;
     height: 15px;
     display: block;
+  }
+
+  .copy-toast {
+    font-size: 12px;
+    color: #9b9b9b;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+  }
+
+  .copy-toast.visible {
+    opacity: 1;
   }
 
   /* Lightbox */
@@ -1179,6 +1203,64 @@
     return btn;
   }
 
+  // ---------- Copy button ----------
+
+  const COPY_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<rect x="9" y="9" width="13" height="13" rx="2"></rect>' +
+    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>' +
+    '</svg>';
+
+  function fallbackCopy(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      console.warn('Copy failed:', err);
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function showCopyToast(toastEl) {
+    if (!toastEl) return;
+    toastEl.classList.add('visible');
+    setTimeout(function() {
+      toastEl.classList.remove('visible');
+    }, 2000);
+  }
+
+  function createCopyButton(text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.innerHTML = COPY_ICON;
+    btn.setAttribute('aria-label', 'Copy message');
+
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(function() { showCopyToast(btn.copyToastEl); })
+          .catch(function() {
+            fallbackCopy(text);
+            showCopyToast(btn.copyToastEl);
+          });
+      } else {
+        fallbackCopy(text);
+        showCopyToast(btn.copyToastEl);
+      }
+    });
+
+    return btn;
+  }
+
   // ---------- Rendering ----------
 
   function scrollToBottom() {
@@ -1209,11 +1291,25 @@
       bubble.appendChild(textSpan);
     }
 
-    // Speaker button appears under every AI message that has text —
-    // user messages are never spoken.
+    // Speaker + copy buttons appear under every AI message that has text —
+    // user messages never get these.
     if (sender === 'ai' && text) {
+      const actions = document.createElement('div');
+      actions.className = 'message-actions';
+
       const speakerBtn = createSpeakerButton(text);
-      bubble.appendChild(speakerBtn);
+      actions.appendChild(speakerBtn);
+
+      const copyBtn = createCopyButton(text);
+      actions.appendChild(copyBtn);
+
+      const copyToast = document.createElement('span');
+      copyToast.className = 'copy-toast';
+      copyToast.textContent = 'Copied!';
+      actions.appendChild(copyToast);
+      copyBtn.copyToastEl = copyToast;
+
+      bubble.appendChild(actions);
       bubble.speakerButtonEl = speakerBtn;
     }
 
@@ -1847,11 +1943,25 @@
         addMessage(accumulated, 'ai', true);
       } else if (aiBubble) {
         // aiBubble was built with empty text during streaming, so createBubble
-        // never attached a speaker button to it — attach one now that the
+        // never attached the actions row to it — attach one now that the
         // full text is known. Safe to append here since nothing overwrites
         // aiBubble's contents again after this point.
+        const actions = document.createElement('div');
+        actions.className = 'message-actions';
+
         const speakerBtn = createSpeakerButton(accumulated);
-        aiBubble.appendChild(speakerBtn);
+        actions.appendChild(speakerBtn);
+
+        const copyBtn = createCopyButton(accumulated);
+        actions.appendChild(copyBtn);
+
+        const copyToast = document.createElement('span');
+        copyToast.className = 'copy-toast';
+        copyToast.textContent = 'Copied!';
+        actions.appendChild(copyToast);
+        copyBtn.copyToastEl = copyToast;
+
+        aiBubble.appendChild(actions);
         aiBubble.speakerButtonEl = speakerBtn;
       }
 
