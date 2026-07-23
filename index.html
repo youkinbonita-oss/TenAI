@@ -1270,13 +1270,19 @@
   // doesn't touch the OpenRouter quota). Supported in Chrome/Edge/Safari;
   // the button is disabled with a tooltip on browsers without support.
   //
-  // Android Chrome's SpeechRecognition is unreliable if you reuse one
-  // instance across multiple start/stop cycles — there's an async gap
-  // between calling stop() and the browser actually releasing the
-  // microphone, and starting a new instance during that gap throws
-  // "recognition has already started" or reports a false "not-allowed".
-  // Fix: track an explicit state machine, only ever start when fully
-  // inactive, and build a brand new recognition instance every time.
+  // continuous:true is unreliable on Chrome for Android — it frequently
+  // does nothing at all (no error, no onstart, no listening indicator)
+  // instead of starting. continuous:false is used instead, which also
+  // has the benefit of auto-stopping as soon as the user finishes speaking.
+  //
+  // A getUserMedia() permission check runs before recognition.start() so
+  // permission problems surface as a real, visible error instead of being
+  // silently swallowed by SpeechRecognition on some Android builds.
+  //
+  // An explicit state machine ('inactive' | 'starting' | 'active' |
+  // 'stopping') guarantees recognition.start() is never called while a
+  // previous instance is still active/stopping, which is what causes
+  // "recognition has already started".
 
   const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
   const speechSupported = !!SpeechRecognitionAPI;
@@ -1292,12 +1298,13 @@
 
   function createRecognition() {
     const rec = new SpeechRecognitionAPI();
-    rec.continuous = true;
+    rec.continuous = false;
     rec.interimResults = true;
     rec.lang = navigator.language || 'en-US';
 
     rec.onstart = function() {
       recognitionState = 'active';
+      micBtn.classList.add('recording');
     };
 
     rec.onresult = function(event) {
@@ -1327,9 +1334,8 @@
     rec.onerror = function(event) {
       console.warn('Speech recognition error:', event.error);
       // 'not-allowed' / 'service-not-allowed' mean the browser blocked mic
-      // access for this site specifically (separate from OS-level mic
-      // permission). Nothing more to do here besides resetting state so
-      // the button is usable again on the next tap.
+      // access for this site. Nothing more to do besides resetting state
+      // so the button is usable again on the next tap.
       recognitionState = 'inactive';
       micBtn.classList.remove('recording');
       recognition = null;
@@ -1348,18 +1354,49 @@
     if (!speechSupported) return;
     if (recognitionState !== 'inactive') return; // already starting/active/stopping — ignore
 
-    baseTextBeforeRecording = input.value.trim();
     recognitionState = 'starting';
-    recognition = createRecognition();
-    micBtn.classList.add('recording');
 
-    try {
-      recognition.start();
-    } catch (err) {
-      console.warn('Could not start speech recognition:', err);
-      recognitionState = 'inactive';
-      micBtn.classList.remove('recording');
-      recognition = null;
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          // Permission confirmed. Release this probe stream immediately —
+          // SpeechRecognition opens its own microphone stream internally.
+          stream.getTracks().forEach(function(track) { track.stop(); });
+
+          if (recognitionState !== 'starting') return; // stopped/cancelled while awaiting permission
+
+          baseTextBeforeRecording = input.value.trim();
+          recognition = createRecognition();
+
+          try {
+            recognition.start();
+          } catch (err) {
+            console.warn('Could not start speech recognition:', err);
+            recognitionState = 'inactive';
+            micBtn.classList.remove('recording');
+            recognition = null;
+          }
+        })
+        .catch(function(err) {
+          console.warn('Microphone permission denied or unavailable:', err);
+          recognitionState = 'inactive';
+          micBtn.classList.remove('recording');
+          recognition = null;
+        });
+    } else {
+      // Browser lacks getUserMedia (rare) — fall back to letting
+      // SpeechRecognition handle its own permission prompt directly.
+      baseTextBeforeRecording = input.value.trim();
+      recognition = createRecognition();
+
+      try {
+        recognition.start();
+      } catch (err) {
+        console.warn('Could not start speech recognition:', err);
+        recognitionState = 'inactive';
+        micBtn.classList.remove('recording');
+        recognition = null;
+      }
     }
   }
 
@@ -1372,17 +1409,22 @@
       } catch (err) {
         // onend/onerror will still fire and fully reset state
       }
+    } else {
+      // Was still awaiting the permission prompt with no recognition
+      // instance yet — just reset state directly.
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
     }
   }
 
   micBtn.addEventListener('click', function() {
     if (recognitionState === 'inactive') {
       startRecording();
-    } else if (recognitionState === 'active') {
+    } else if (recognitionState === 'active' || recognitionState === 'starting') {
       stopRecording();
     }
-    // if state is 'starting' or 'stopping', ignore the tap — this is what
-    // prevents rapid double-taps from causing overlapping start()/stop() calls
+    // if state is 'stopping', ignore the tap — this is what prevents rapid
+    // double-taps from causing overlapping start()/stop() calls
   });
 
   removeImageBtn.addEventListener('click', function() {
