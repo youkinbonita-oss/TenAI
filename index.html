@@ -1269,19 +1269,38 @@
   // Uses the browser's built-in Web Speech API (free, no external service,
   // doesn't touch the OpenRouter quota). Supported in Chrome/Edge/Safari;
   // the button is disabled with a tooltip on browsers without support.
+  //
+  // Android Chrome's SpeechRecognition is unreliable if you reuse one
+  // instance across multiple start/stop cycles — there's an async gap
+  // between calling stop() and the browser actually releasing the
+  // microphone, and starting a new instance during that gap throws
+  // "recognition has already started" or reports a false "not-allowed".
+  // Fix: track an explicit state machine, only ever start when fully
+  // inactive, and build a brand new recognition instance every time.
 
   const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const speechSupported = !!SpeechRecognitionAPI;
+
   let recognition = null;
-  let isRecording = false;
+  let recognitionState = 'inactive'; // 'inactive' | 'starting' | 'active' | 'stopping'
   let baseTextBeforeRecording = '';
 
-  if (SpeechRecognitionAPI) {
-    recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || 'en-US';
+  if (!speechSupported) {
+    micBtn.disabled = true;
+    micBtn.title = 'Voice input is not supported in this browser';
+  }
 
-    recognition.onresult = function(event) {
+  function createRecognition() {
+    const rec = new SpeechRecognitionAPI();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+
+    rec.onstart = function() {
+      recognitionState = 'active';
+    };
+
+    rec.onresult = function(event) {
       let finalTranscript = '';
       let interimTranscript = '';
 
@@ -1305,51 +1324,65 @@
       updateSendBtnState();
     };
 
-    recognition.onerror = function(event) {
+    rec.onerror = function(event) {
       console.warn('Speech recognition error:', event.error);
-      stopRecording();
+      // 'not-allowed' / 'service-not-allowed' mean the browser blocked mic
+      // access for this site specifically (separate from OS-level mic
+      // permission). Nothing more to do here besides resetting state so
+      // the button is usable again on the next tap.
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
     };
 
-    recognition.onend = function() {
-      stopRecording();
+    rec.onend = function() {
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
     };
-  } else {
-    micBtn.disabled = true;
-    micBtn.title = 'Voice input is not supported in this browser';
+
+    return rec;
   }
 
   function startRecording() {
-    if (!recognition || isRecording) return;
+    if (!speechSupported) return;
+    if (recognitionState !== 'inactive') return; // already starting/active/stopping — ignore
+
     baseTextBeforeRecording = input.value.trim();
-    isRecording = true;
+    recognitionState = 'starting';
+    recognition = createRecognition();
     micBtn.classList.add('recording');
+
     try {
       recognition.start();
     } catch (err) {
       console.warn('Could not start speech recognition:', err);
-      stopRecording();
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
     }
   }
 
   function stopRecording() {
-    if (!isRecording) return;
-    isRecording = false;
-    micBtn.classList.remove('recording');
+    if (recognitionState !== 'active' && recognitionState !== 'starting') return;
+    recognitionState = 'stopping';
     if (recognition) {
       try {
         recognition.stop();
       } catch (err) {
-        // already stopped
+        // onend/onerror will still fire and fully reset state
       }
     }
   }
 
   micBtn.addEventListener('click', function() {
-    if (isRecording) {
-      stopRecording();
-    } else {
+    if (recognitionState === 'inactive') {
       startRecording();
+    } else if (recognitionState === 'active') {
+      stopRecording();
     }
+    // if state is 'starting' or 'stopping', ignore the tap — this is what
+    // prevents rapid double-taps from causing overlapping start()/stop() calls
   });
 
   removeImageBtn.addEventListener('click', function() {
