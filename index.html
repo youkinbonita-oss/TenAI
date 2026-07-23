@@ -1309,18 +1309,26 @@
     dislikeBtn.setAttribute('aria-label', 'Dislike this response');
 
     likeBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      const nowActive = !likeBtn.classList.contains('active');
-      likeBtn.classList.toggle('active', nowActive);
-      if (nowActive) dislikeBtn.classList.remove('active');
-    });
+    e.stopPropagation();
+    const nowActive = !likeBtn.classList.contains('active');
+    likeBtn.classList.toggle('active', nowActive);
+
+    if (nowActive) {
+        dislikeBtn.classList.remove('active');
+        showToast("Thanks for your feedback");
+    }
+});
 
     dislikeBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      const nowActive = !dislikeBtn.classList.contains('active');
-      dislikeBtn.classList.toggle('active', nowActive);
-      if (nowActive) likeBtn.classList.remove('active');
-    });
+    e.stopPropagation();
+    const nowActive = !dislikeBtn.classList.contains('active');
+    dislikeBtn.classList.toggle('active', nowActive);
+
+    if (nowActive) {
+        likeBtn.classList.remove('active');
+        showToast("Thanks for your feedback");
+    }
+});
 
     return { likeBtn: likeBtn, dislikeBtn: dislikeBtn };
   }
@@ -1328,20 +1336,53 @@
   // ---------- Share button ----------
 
   const SHARE_ICON =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-    '<circle cx="18" cy="5" r="3"></circle>' +
-    '<circle cx="6" cy="12" r="3"></circle>' +
-    '<circle cx="18" cy="19" r="3"></circle>' +
-    '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>' +
-    '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>' +
-    '</svg>';
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="18" cy="5" r="3"></circle>' +
+  '<circle cx="6" cy="12" r="3"></circle>' +
+  '<circle cx="18" cy="19" r="3"></circle>' +
+  '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>' +
+  '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>' +
+  '</svg>';
 
-  function createShareButton(text) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'share-btn';
-    btn.innerHTML = SHARE_ICON;
-    btn.setAttribute('aria-label', 'Share this response');
+// 👇 NEW FUNCTION STARTS HERE
+function showToast(message) {
+  const toast = document.createElement("div");
+  toast.textContent = message;
+
+  toast.style.position = "fixed";
+  toast.style.bottom = "80px";
+  toast.style.left = "50%";
+  toast.style.transform = "translateX(-50%)";
+  toast.style.background = "#202123";
+  toast.style.color = "#fff";
+  toast.style.padding = "10px 18px";
+  toast.style.borderRadius = "20px";
+  toast.style.fontSize = "14px";
+  toast.style.zIndex = "999999";
+  toast.style.opacity = "0";
+  toast.style.transition = "opacity 0.25s";
+
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+  });
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    setTimeout(() => {
+      toast.remove();
+    }, 250);
+  }, 1800);
+}
+// 👆 NEW FUNCTION ENDS HERE
+
+function createShareButton(text) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'share-btn';
+  btn.innerHTML = SHARE_ICON;
+  btn.setAttribute('aria-label', 'Share this response');
 
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
