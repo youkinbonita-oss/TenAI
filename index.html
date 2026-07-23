@@ -486,6 +486,37 @@
     cursor: pointer;
   }
 
+  .speaker-btn {
+    display: block;
+    margin-top: 6px;
+    background: none;
+    border: none;
+    color: #9b9b9b;
+    cursor: pointer;
+    padding: 3px;
+    border-radius: 6px;
+  }
+
+  .speaker-btn:hover {
+    background: #3d3d3d;
+    color: #fff;
+  }
+
+  .speaker-btn.speaking {
+    color: #2f6fed;
+  }
+
+  .speaker-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .speaker-btn svg {
+    width: 15px;
+    height: 15px;
+    display: block;
+  }
+
   /* Lightbox */
   #lightbox {
     display: none;
@@ -944,6 +975,8 @@
   }
 
   function startNewConversation() {
+    stopSpeaking();
+
     const newConv = createNewConversationObject();
     conversationsCache[newConv.id] = newConv;
     dbSaveConversation(newConv);
@@ -964,6 +997,8 @@
 
     const conv = conversationsCache[id];
     if (!conv) return;
+
+    stopSpeaking();
 
     activeId = id;
     setActiveIdInStorage(activeId);
@@ -1004,6 +1039,90 @@
     });
   }
 
+  // ---------- AI voice replies (SpeechSynthesis) ----------
+
+  const speechSynthesisSupported = !!window.speechSynthesis;
+  let currentSpeakingButton = null;
+
+  const SPEAKER_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>' +
+    '<path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>' +
+    '<path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>' +
+    '</svg>';
+
+  const STOP_ICON =
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none">' +
+    '<rect x="6" y="6" width="12" height="12" rx="1"></rect>' +
+    '</svg>';
+
+  function setSpeakerButtonState(button, speaking) {
+    button.innerHTML = speaking ? STOP_ICON : SPEAKER_ICON;
+    button.classList.toggle('speaking', speaking);
+    button.setAttribute('aria-label', speaking ? 'Stop reading' : 'Read message aloud');
+  }
+
+  function stopSpeaking() {
+    if (speechSynthesisSupported) {
+      window.speechSynthesis.cancel();
+    }
+    if (currentSpeakingButton) {
+      setSpeakerButtonState(currentSpeakingButton, false);
+    }
+    currentSpeakingButton = null;
+  }
+
+  function speakText(text, button) {
+    if (!speechSynthesisSupported || !text) return;
+
+    // Clicking the button that's currently reading acts as "stop".
+    if (currentSpeakingButton === button) {
+      stopSpeaking();
+      return;
+    }
+
+    // Only one message reads at a time — stop whatever else was playing.
+    stopSpeaking();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    utterance.onend = function() {
+      if (currentSpeakingButton === button) {
+        setSpeakerButtonState(button, false);
+        currentSpeakingButton = null;
+      }
+    };
+    utterance.onerror = function() {
+      if (currentSpeakingButton === button) {
+        setSpeakerButtonState(button, false);
+        currentSpeakingButton = null;
+      }
+    };
+
+    currentSpeakingButton = button;
+    setSpeakerButtonState(button, true);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function createSpeakerButton(text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'speaker-btn';
+    setSpeakerButtonState(btn, false);
+
+    if (!speechSynthesisSupported) {
+      btn.disabled = true;
+      btn.title = 'Voice playback is not supported in this browser';
+    }
+
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      speakText(text, btn);
+    });
+
+    return btn;
+  }
+
   // ---------- Rendering ----------
 
   function scrollToBottom() {
@@ -1032,6 +1151,14 @@
       const textSpan = document.createElement('span');
       textSpan.textContent = text;
       bubble.appendChild(textSpan);
+    }
+
+    // Speaker button appears under every AI message that has text —
+    // user messages are never spoken.
+    if (sender === 'ai' && text) {
+      const speakerBtn = createSpeakerButton(text);
+      bubble.appendChild(speakerBtn);
+      bubble.speakerButtonEl = speakerBtn;
     }
 
     row.appendChild(bubble);
@@ -1577,6 +1704,7 @@
     if (!text && !imageToSend) return;
     if (isWaiting) return;
 
+    stopSpeaking();
     hideVoiceReviewBar();
     addMessage(text, 'user', false, imageToSend);
     input.value = '';
@@ -1614,8 +1742,11 @@
         const data = await response.json();
         removeThinkingBubble();
         accumulated = data.reply || '(No reply received)';
-        addMessage(accumulated, 'ai', true);
+        const jsonReplyBubble = addMessage(accumulated, 'ai', true);
         persistMessage(accumulated, 'ai');
+        if (jsonReplyBubble.speakerButtonEl) {
+          speakText(accumulated, jsonReplyBubble.speakerButtonEl);
+        }
         return;
       }
 
@@ -1658,12 +1789,26 @@
 
       removeThinkingBubble();
 
+      let finalReplyBubble = aiBubble;
+
       if (!accumulated) {
         accumulated = '(No reply received)';
-        addMessage(accumulated, 'ai', true);
+        finalReplyBubble = addMessage(accumulated, 'ai', true);
+      } else if (aiBubble) {
+        // aiBubble was built with empty text during streaming, so createBubble
+        // never attached a speaker button to it — attach one now that the
+        // full text is known. Safe to append here since nothing overwrites
+        // aiBubble's contents again after this point.
+        const speakerBtn = createSpeakerButton(accumulated);
+        aiBubble.appendChild(speakerBtn);
+        aiBubble.speakerButtonEl = speakerBtn;
       }
 
       persistMessage(accumulated, 'ai');
+
+      if (finalReplyBubble && finalReplyBubble.speakerButtonEl) {
+        speakText(accumulated, finalReplyBubble.speakerButtonEl);
+      }
 
     } catch (err) {
       removeThinkingBubble();
