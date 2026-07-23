@@ -337,6 +337,75 @@
     background: #555;
   }
 
+  #voice-review-bar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #262626;
+    border: 1px solid #3d3d3d;
+    border-radius: 14px;
+  }
+
+  #voice-review-bar.visible {
+    display: flex;
+  }
+
+  #voice-review-label {
+    flex: 1;
+    min-width: 0;
+    color: #9b9b9b;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .voice-review-action-btn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease;
+  }
+
+  .voice-review-action-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  #voice-cancel-btn {
+    background: #3d3d3d;
+    color: #d4d4d4;
+  }
+
+  #voice-cancel-btn:hover {
+    background: #4a4a4a;
+  }
+
+  #voice-confirm-btn {
+    background: #3d3d3d;
+    color: #d4d4d4;
+  }
+
+  #voice-confirm-btn:hover {
+    background: #4a4a4a;
+  }
+
+  #voice-send-btn {
+    background: #2f6fed;
+    color: #fff;
+  }
+
+  #voice-send-btn:hover {
+    background: #2660d1;
+  }
+
   #input-row {
     display: flex;
     align-items: flex-end;
@@ -591,6 +660,26 @@
           <button id="remove-image-btn" type="button" aria-label="Remove image">✕</button>
         </div>
       </div>
+      <div id="voice-review-bar">
+        <button id="voice-cancel-btn" class="voice-review-action-btn" type="button" aria-label="Cancel transcription">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+        <span id="voice-review-label">Edit if needed, then confirm or send</span>
+        <button id="voice-confirm-btn" class="voice-review-action-btn" type="button" aria-label="Confirm transcription">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </button>
+        <button id="voice-send-btn" class="voice-review-action-btn" type="button" aria-label="Send transcribed message">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
       <div id="input-row">
         <button id="attach-btn" type="button" aria-label="Attach image">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -643,6 +732,10 @@
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
   const removeImageBtn = document.getElementById('remove-image-btn');
+  const voiceReviewBar = document.getElementById('voice-review-bar');
+  const voiceCancelBtn = document.getElementById('voice-cancel-btn');
+  const voiceConfirmBtn = document.getElementById('voice-confirm-btn');
+  const voiceSendBtn = document.getElementById('voice-send-btn');
   const lightbox = document.getElementById('lightbox');
   const lightboxImg = document.getElementById('lightbox-img');
   const lightboxClose = document.getElementById('lightbox-close');
@@ -1348,19 +1441,41 @@
       micBtn.classList.remove('recording');
       recognition = null;
 
-      // Auto-send, ChatGPT-style: briefly show the transcribed text in the
-      // box, then send it automatically. Guarded by gotFinalTranscript so
-      // this fires at most once per recording, preventing duplicate sends.
+      // ChatGPT-style review step: show the transcribed text with X /
+      // confirm / send controls instead of sending automatically, so the
+      // user can edit it first. Guarded by gotFinalTranscript so this only
+      // shows once per recording.
       if (gotFinalTranscript && input.value.trim().length > 0) {
         gotFinalTranscript = false;
-        setTimeout(function() {
-          sendMessage();
-        }, 400);
+        voiceReviewBar.classList.add('visible');
       }
     };
 
     return rec;
   }
+
+  function hideVoiceReviewBar() {
+    voiceReviewBar.classList.remove('visible');
+  }
+
+  voiceCancelBtn.addEventListener('click', function() {
+    input.value = '';
+    hideVoiceReviewBar();
+    autoResize();
+    updateSendBtnState();
+  });
+
+  voiceConfirmBtn.addEventListener('click', function() {
+    // Keep the (possibly edited) text in the box; just dismiss the review
+    // bar so the user can continue editing or send whenever they're ready.
+    hideVoiceReviewBar();
+    input.focus();
+  });
+
+  voiceSendBtn.addEventListener('click', function() {
+    hideVoiceReviewBar();
+    sendMessage();
+  });
 
   function startRecording() {
     if (!speechSupported) return;
@@ -1368,6 +1483,7 @@
 
     recognitionState = 'starting';
     gotFinalTranscript = false;
+    hideVoiceReviewBar();
 
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ audio: true })
@@ -1461,6 +1577,7 @@
     if (!text && !imageToSend) return;
     if (isWaiting) return;
 
+    hideVoiceReviewBar();
     addMessage(text, 'user', false, imageToSend);
     input.value = '';
     autoResize();
