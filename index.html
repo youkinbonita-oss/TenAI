@@ -1290,6 +1290,7 @@
   let recognition = null;
   let recognitionState = 'inactive'; // 'inactive' | 'starting' | 'active' | 'stopping'
   let baseTextBeforeRecording = '';
+  let gotFinalTranscript = false;
 
   if (!speechSupported) {
     micBtn.disabled = true;
@@ -1325,6 +1326,7 @@
 
       if (finalTranscript) {
         baseTextBeforeRecording = input.value.trim();
+        gotFinalTranscript = true;
       }
 
       autoResize();
@@ -1345,6 +1347,16 @@
       recognitionState = 'inactive';
       micBtn.classList.remove('recording');
       recognition = null;
+
+      // Auto-send, ChatGPT-style: briefly show the transcribed text in the
+      // box, then send it automatically. Guarded by gotFinalTranscript so
+      // this fires at most once per recording, preventing duplicate sends.
+      if (gotFinalTranscript && input.value.trim().length > 0) {
+        gotFinalTranscript = false;
+        setTimeout(function() {
+          sendMessage();
+        }, 400);
+      }
     };
 
     return rec;
@@ -1355,6 +1367,7 @@
     if (recognitionState !== 'inactive') return; // already starting/active/stopping — ignore
 
     recognitionState = 'starting';
+    gotFinalTranscript = false;
 
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ audio: true })
