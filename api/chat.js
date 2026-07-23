@@ -1,166 +1,890 @@
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "10mb"
-    }
-  }
-};
 
-const FREE_MODELS = [
-  "openrouter/free",
-  "openai/gpt-oss-120b:free",
-  "nvidia/nemotron-3-super-120b-a12b:free"
-];
+  const chatWindow = document.getElementById('chat-window');
+  const input = document.getElementById('message-input');
+  const sendBtn = document.getElementById('send-btn');
+  const newChatBtn = document.getElementById('new-chat-btn');
+  const conversationList = document.getElementById('conversation-list');
+  const sidebar = document.getElementById('sidebar');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  const menuBtn = document.getElementById('menu-btn');
+  const attachBtn = document.getElementById('attach-btn');
+  const micBtn = document.getElementById('mic-btn');
+  const fileInput = document.getElementById('file-input');
+  const imagePreviewBar = document.getElementById('image-preview-bar');
+  const imagePreviewImg = document.getElementById('image-preview-img');
+  const removeImageBtn = document.getElementById('remove-image-btn');
+  const lightbox = document.getElementById('lightbox');
+  const lightboxImg = document.getElementById('lightbox-img');
+  const lightboxClose = document.getElementById('lightbox-close');
 
-const VISION_MODELS = [
-  "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-];
+  let pendingImage = null; // base64 data URL of image staged for the next message
 
-function lastMessageHasImage(messages) {
-  if (messages.length === 0) return false;
-  const last = messages[messages.length - 1];
-  return Array.isArray(last.content) && last.content.some(function(part) {
-    return part.type === "image_url";
-  });
-}
+  const ACTIVE_ID_KEY = 'tenai_active_id';
+  const WELCOME_TEXT = "👋 Hi! I'm TenAI. How can I help you today?";
+  const DB_NAME = 'tenai_db';
+  const DB_VERSION = 1;
+  const STORE_NAME = 'conversations';
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  let isWaiting = false;
+  let activeId = null;
+  let conversationsCache = {}; // in-memory source of truth, kept in sync with IndexedDB
 
-  try {
-    const { message, messages, image } = req.body || {};
+  // ---------- Storage helpers (IndexedDB) ----------
+  // IndexedDB is used instead of localStorage because image-containing
+  // conversations can be several MB, well past localStorage's ~5-10MB quota.
+  // Each conversation is stored as its own record, so one large chat growing
+  // doesn't risk the save of every other chat.
 
-    let finalMessages = Array.isArray(messages) ? messages : [];
+  let dbInstance = null;
 
-    finalMessages = finalMessages.filter(function(m) {
-      if (!m) return false;
-      if (typeof m.content === "string") return m.content.trim().length > 0;
-      if (Array.isArray(m.content)) return m.content.length > 0;
-      return false;
-    }).map(function(m) {
-      return {
-        role: m.role === "ai" || m.role === "assistant" ? "assistant" : "user",
-        content: m.content
+  function openDB() {
+    return new Promise(function(resolve, reject) {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB not available'));
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = function(e) {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
       };
+      request.onsuccess = function(e) { resolve(e.target.result); };
+      request.onerror = function(e) { reject(e.target.error); };
     });
+  }
 
-    if (finalMessages.length === 0 && typeof message === "string" && message.trim().length > 0) {
-      finalMessages = [{ role: "user", content: message }];
+  function getDB() {
+    if (dbInstance) return Promise.resolve(dbInstance);
+    return openDB().then(function(db) {
+      dbInstance = db;
+      return db;
+    });
+  }
+
+  function dbGetAllConversations() {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).getAll();
+        req.onsuccess = function() { resolve(req.result || []); };
+        req.onerror = function() { reject(req.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not load conversations from IndexedDB:', err);
+      return [];
+    });
+  }
+
+  function dbSaveConversation(conv) {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(conv);
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function() { reject(tx.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not save conversation to IndexedDB:', err);
+    });
+  }
+
+  function dbDeleteConversation(id) {
+    return getDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(id);
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function() { reject(tx.error); };
+      });
+    }).catch(function(err) {
+      console.warn('Could not delete conversation from IndexedDB:', err);
+    });
+  }
+
+  function getActiveIdFromStorage() {
+    try {
+      return localStorage.getItem(ACTIVE_ID_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function setActiveIdInStorage(id) {
+    try {
+      localStorage.setItem(ACTIVE_ID_KEY, id);
+    } catch (err) {
+      // fail silently — active id is just a convenience pointer
+    }
+  }
+
+  function generateId() {
+    return 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function createNewConversationObject() {
+    const id = generateId();
+    return {
+      id: id,
+      title: 'New Chat',
+      messages: [{ text: WELCOME_TEXT, sender: 'ai' }],
+      updatedAt: Date.now()
+    };
+  }
+
+  // ---------- Image compression ----------
+  // Phone camera photos are often several MB as base64. Resize + re-encode as
+  // JPEG before storing/sending, both for faster uploads and a smaller payload.
+
+  function compressImage(file) {
+    return new Promise(function(resolve, reject) {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = function() {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = function() {
+          const MAX_DIMENSION = 1280;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > MAX_DIMENSION) {
+            height = Math.round(height * (MAX_DIMENSION / width));
+            width = MAX_DIMENSION;
+          } else if (height > MAX_DIMENSION) {
+            width = Math.round(width * (MAX_DIMENSION / height));
+            height = MAX_DIMENSION;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          resolve(canvas.toDataURL('image/jpeg', 0.72));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ---------- Conversation management ----------
+
+  function getActiveConversation() {
+    return conversationsCache[activeId] || null;
+  }
+
+  function persistMessage(text, sender, image) {
+    const conv = conversationsCache[activeId];
+    if (!conv) return;
+
+    const entry = { text: text, sender: sender };
+    if (image) entry.image = image;
+
+    conv.messages.push(entry);
+    conv.updatedAt = Date.now();
+
+    if (conv.title === 'New Chat' && sender === 'user') {
+      const titleSource = text && text.length > 0 ? text : 'Image';
+      conv.title = titleSource.length > 30 ? titleSource.slice(0, 30) + '...' : titleSource;
     }
 
-    if (finalMessages.length === 0) {
-      return res.status(400).json({ error: "No message content provided" });
-    }
+    dbSaveConversation(conv);
+    renderSidebar();
+  }
 
-    const hasImage = lastMessageHasImage(finalMessages) || typeof image === "string";
+  function buildMessagesForApi() {
+    const conv = getActiveConversation();
+    if (!conv) return [];
 
-    finalMessages = [
-      { role: "system", content: "You are TenAI, a helpful assistant. Always reply in natural conversational language, never in a labeled or classifier-style format such as 'User Safety: safe'. When an image is provided, immediately describe what is in the image in plain language, then answer any question the user asked about it." },
-      ...finalMessages
-    ];
+    return conv.messages
+      .filter(function(msg) {
+        return msg.text !== WELCOME_TEXT;
+      })
+      .map(function(msg) {
+        const role = msg.sender === 'ai' ? 'assistant' : 'user';
 
-    const modelList = hasImage ? VISION_MODELS : FREE_MODELS;
-
-    // Many free vision providers on OpenRouter silently drop image data when
-    // stream:true is combined with image_url content. Image requests are sent
-    // non-streaming to guarantee the image actually reaches the model.
-    if (hasImage) {
-      let data = null;
-      let lastError = null;
-
-      for (const model of modelList) {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: finalMessages,
-            max_tokens: 450
-          })
-        });
-
-        const result = await response.json();
-
-        if (!result.error && result.choices?.[0]?.message?.content) {
-          data = result;
-          console.log("Used vision model (non-streaming):", model);
-          break;
+        if (msg.image) {
+          const parts = [];
+          if (msg.text) {
+            parts.push({ type: 'text', text: msg.text });
+          }
+          parts.push({ type: 'image_url', image_url: { url: msg.image } });
+          return { role: role, content: parts };
         }
 
-        lastError = result.error?.message || "Unknown error";
-        console.log(`Vision model ${model} failed:`, lastError);
-      }
+        return { role: role, content: msg.text };
+      });
+  }
 
-      if (!data) {
-        return res.status(500).json({ error: "All vision models unavailable: " + lastError });
-      }
+  function startNewConversation() {
+    const newConv = createNewConversationObject();
+    conversationsCache[newConv.id] = newConv;
+    dbSaveConversation(newConv);
 
-      return res.status(200).json({ reply: data.choices[0].message.content });
+    activeId = newConv.id;
+    setActiveIdInStorage(activeId);
+
+    renderChatWindow(newConv.messages);
+    renderSidebar();
+    closeSidebarOnMobile();
+  }
+
+  function switchToConversation(id) {
+    if (id === activeId) {
+      closeSidebarOnMobile();
+      return;
     }
 
-    let upstreamResponse = null;
-    let lastError = null;
+    const conv = conversationsCache[id];
+    if (!conv) return;
 
-    for (const model of modelList) {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: finalMessages,
-          max_tokens: 600,
-          stream: true
-        })
+    activeId = id;
+    setActiveIdInStorage(activeId);
+
+    renderChatWindow(conv.messages);
+    renderSidebar();
+    closeSidebarOnMobile();
+  }
+
+  function initConversations() {
+    return dbGetAllConversations().then(function(records) {
+      conversationsCache = {};
+      records.forEach(function(conv) {
+        conversationsCache[conv.id] = conv;
       });
 
-      if (response.ok) {
-        upstreamResponse = response;
-        console.log("Streaming with model:", model, "(text)");
-        break;
+      let storedActiveId = getActiveIdFromStorage();
+      const ids = Object.keys(conversationsCache);
+
+      if (ids.length === 0) {
+        const newConv = createNewConversationObject();
+        conversationsCache[newConv.id] = newConv;
+        dbSaveConversation(newConv);
+        activeId = newConv.id;
+        setActiveIdInStorage(activeId);
+      } else if (storedActiveId && conversationsCache[storedActiveId]) {
+        activeId = storedActiveId;
+      } else {
+        ids.sort(function(a, b) {
+          return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
+        });
+        activeId = ids[0];
+        setActiveIdInStorage(activeId);
       }
 
-      const errJson = await response.json().catch(() => null);
-      lastError = errJson?.error?.message || `HTTP ${response.status}`;
-      console.log(`Model ${model} failed:`, lastError);
+      renderChatWindow(conversationsCache[activeId].messages);
+      renderSidebar();
+    });
+  }
+
+  // ---------- Rendering ----------
+
+  function scrollToBottom() {
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+
+  function createBubble(text, sender, image) {
+    const row = document.createElement('div');
+    row.className = 'message-row ' + sender;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if (image) {
+      const img = document.createElement('img');
+      img.className = 'bubble-image';
+      img.src = image;
+      img.alt = 'Uploaded image';
+      img.addEventListener('click', function() {
+        openLightbox(image);
+      });
+      bubble.appendChild(img);
     }
 
-    if (!upstreamResponse) {
-      return res.status(500).json({ error: "All models unavailable: " + lastError });
+    if (text) {
+      const textSpan = document.createElement('span');
+      textSpan.textContent = text;
+      bubble.appendChild(textSpan);
     }
 
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive"
+    row.appendChild(bubble);
+    return { row: row, bubble: bubble };
+  }
+
+  function addMessage(text, sender, skipPersist, image) {
+    const { row, bubble } = createBubble(text, sender, image);
+    chatWindow.appendChild(row);
+    scrollToBottom();
+
+    if (!skipPersist) {
+      persistMessage(text, sender, image);
+    }
+
+    return bubble;
+  }
+
+  function renderChatWindow(messages) {
+    chatWindow.innerHTML = '';
+    messages.forEach(function(msg) {
+      const { row } = createBubble(msg.text, msg.sender, msg.image);
+      chatWindow.appendChild(row);
+    });
+    scrollToBottom();
+  }
+
+  function renameConversation(id, newTitle) {
+    const conv = conversationsCache[id];
+    if (!conv) return;
+
+    const trimmed = newTitle.trim();
+    conv.title = trimmed.length > 0 ? trimmed : 'New Chat';
+    dbSaveConversation(conv);
+    renderSidebar();
+  }
+
+  function deleteConversation(id) {
+    delete conversationsCache[id];
+    dbDeleteConversation(id);
+
+    const remainingIds = Object.keys(conversationsCache);
+
+    if (remainingIds.length === 0) {
+      const newConv = createNewConversationObject();
+      conversationsCache[newConv.id] = newConv;
+      dbSaveConversation(newConv);
+      activeId = newConv.id;
+      setActiveIdInStorage(activeId);
+      renderChatWindow(newConv.messages);
+    } else if (id === activeId) {
+      remainingIds.sort(function(a, b) {
+        return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
+      });
+      activeId = remainingIds[0];
+      setActiveIdInStorage(activeId);
+      renderChatWindow(conversationsCache[activeId].messages);
+    }
+
+    renderSidebar();
+  }
+
+  function renderSidebar() {
+    const ids = Object.keys(conversationsCache);
+
+    ids.sort(function(a, b) {
+      return conversationsCache[b].updatedAt - conversationsCache[a].updatedAt;
     });
 
-    const reader = upstreamResponse.body.getReader();
-    const decoder = new TextDecoder();
+    conversationList.innerHTML = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(decoder.decode(value, { stream: true }));
+    ids.forEach(function(id) {
+      const conv = conversationsCache[id];
+      const item = document.createElement('div');
+      item.className = 'conversation-item' + (id === activeId ? ' active' : '');
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'conversation-title';
+      titleSpan.textContent = conv.title;
+
+      item.appendChild(titleSpan);
+
+      const actions = document.createElement('div');
+      actions.className = 'conv-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'conv-action-btn';
+      editBtn.setAttribute('aria-label', 'Rename conversation');
+      editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>';
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'conv-action-btn';
+      deleteBtn.setAttribute('aria-label', 'Delete conversation');
+      deleteBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>';
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      item.appendChild(actions);
+
+      item.addEventListener('click', function() {
+        switchToConversation(id);
+      });
+
+      editBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        startInlineRename(item, titleSpan, id, conv.title);
+      });
+
+      deleteBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        deleteConversation(id);
+      });
+
+      conversationList.appendChild(item);
+    });
+  }
+
+  function startInlineRename(item, titleSpan, id, currentTitle) {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'conversation-title-input';
+    input.value = currentTitle;
+
+    item.replaceChild(input, titleSpan);
+    input.focus();
+    input.select();
+
+    function commit() {
+      renameConversation(id, input.value);
     }
 
-    res.end();
+    input.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
 
-  } catch (error) {
-    console.error(error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: error.message });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        renderSidebar();
+      }
+    });
+
+    input.addEventListener('blur', commit);
+  }
+
+  function addThinkingBubble() {
+    const row = document.createElement('div');
+    row.className = 'message-row ai';
+    row.id = 'thinking-row';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble thinking';
+    bubble.innerHTML = 'TenAI is thinking<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+
+    row.appendChild(bubble);
+    chatWindow.appendChild(row);
+    scrollToBottom();
+  }
+
+  function removeThinkingBubble() {
+    const row = document.getElementById('thinking-row');
+    if (row) row.remove();
+  }
+
+  function autoResize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  }
+
+  function updateSendBtnState() {
+    if ((input.value.trim().length > 0 || pendingImage) && !isWaiting) {
+      sendBtn.classList.add('active');
     } else {
-      res.end();
+      sendBtn.classList.remove('active');
     }
   }
-}
+
+  // ---------- Image lightbox ----------
+
+  let lbScale = 1;
+  let lbTranslateX = 0;
+  let lbTranslateY = 0;
+  let lbStartDistance = 0;
+  let lbStartScale = 1;
+  let lbPanning = false;
+  let lbLastX = 0;
+  let lbLastY = 0;
+
+  function applyLightboxTransform() {
+    lightboxImg.style.transform =
+      'translate(' + lbTranslateX + 'px, ' + lbTranslateY + 'px) scale(' + lbScale + ')';
+  }
+
+  function resetLightboxTransform() {
+    lbScale = 1;
+    lbTranslateX = 0;
+    lbTranslateY = 0;
+    applyLightboxTransform();
+  }
+
+  function openLightbox(src) {
+    lightboxImg.src = src;
+    resetLightboxTransform();
+    lightbox.classList.add('open');
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('open');
+    lightboxImg.src = '';
+    resetLightboxTransform();
+  }
+
+  function touchDistance(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  lightboxClose.addEventListener('click', closeLightbox);
+
+  lightbox.addEventListener('click', function(e) {
+    if (e.target === lightbox) {
+      closeLightbox();
+    }
+  });
+
+  lightboxImg.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 2) {
+      lbStartDistance = touchDistance(e.touches);
+      lbStartScale = lbScale;
+      lbPanning = false;
+    } else if (e.touches.length === 1 && lbScale > 1) {
+      lbPanning = true;
+      lbLastX = e.touches[0].clientX;
+      lbLastY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  lightboxImg.addEventListener('touchmove', function(e) {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const newDistance = touchDistance(e.touches);
+      let newScale = lbStartScale * (newDistance / lbStartDistance);
+      newScale = Math.min(Math.max(newScale, 1), 4);
+      lbScale = newScale;
+      applyLightboxTransform();
+    } else if (e.touches.length === 1 && lbPanning) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - lbLastX;
+      const dy = e.touches[0].clientY - lbLastY;
+      lbLastX = e.touches[0].clientX;
+      lbLastY = e.touches[0].clientY;
+      lbTranslateX += dx;
+      lbTranslateY += dy;
+      applyLightboxTransform();
+    }
+  }, { passive: false });
+
+  lightboxImg.addEventListener('touchend', function(e) {
+    lbPanning = false;
+    if (lbScale <= 1) {
+      resetLightboxTransform();
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && lightbox.classList.contains('open')) {
+      closeLightbox();
+    }
+  });
+
+  // ---------- Sidebar open/close (mobile) ----------
+
+  function openSidebar() {
+    sidebar.classList.add('open');
+    sidebarBackdrop.classList.add('open');
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('open');
+  }
+
+  function closeSidebarOnMobile() {
+    if (window.innerWidth < 768) {
+      closeSidebar();
+    }
+  }
+
+  menuBtn.addEventListener('click', function() {
+    if (sidebar.classList.contains('open')) {
+      closeSidebar();
+    } else {
+      openSidebar();
+    }
+  });
+
+  sidebarBackdrop.addEventListener('click', closeSidebar);
+
+  // ---------- Image attach ----------
+
+  attachBtn.addEventListener('click', function() {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function() {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+
+    compressImage(file).then(function(dataUrl) {
+      pendingImage = dataUrl;
+      imagePreviewImg.src = pendingImage;
+      imagePreviewBar.classList.add('visible');
+      updateSendBtnState();
+    }).catch(function(err) {
+      console.error('Image processing failed:', err);
+    });
+
+    fileInput.value = '';
+  });
+
+  // ---------- Voice input ----------
+  // Uses the browser's built-in Web Speech API (free, no external service,
+  // doesn't touch the OpenRouter quota). Supported in Chrome/Edge/Safari;
+  // the button is disabled with a tooltip on browsers without support.
+  //
+  // Android Chrome's SpeechRecognition is unreliable if you reuse one
+  // instance across multiple start/stop cycles — there's an async gap
+  // between calling stop() and the browser actually releasing the
+  // microphone, and starting a new instance during that gap throws
+  // "recognition has already started" or reports a false "not-allowed".
+  // Fix: track an explicit state machine, only ever start when fully
+  // inactive, and build a brand new recognition instance every time.
+
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const speechSupported = !!SpeechRecognitionAPI;
+
+  let recognition = null;
+  let recognitionState = 'inactive'; // 'inactive' | 'starting' | 'active' | 'stopping'
+  let baseTextBeforeRecording = '';
+
+  if (!speechSupported) {
+    micBtn.disabled = true;
+    micBtn.title = 'Voice input is not supported in this browser';
+  }
+
+  function createRecognition() {
+    const rec = new SpeechRecognitionAPI();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || 'en-US';
+
+    rec.onstart = function() {
+      recognitionState = 'active';
+    };
+
+    rec.onresult = function(event) {
+      let finalTranscript = '';
+      let interimTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      const separator = baseTextBeforeRecording && !baseTextBeforeRecording.endsWith(' ') ? ' ' : '';
+      input.value = baseTextBeforeRecording + separator + finalTranscript + interimTranscript;
+
+      if (finalTranscript) {
+        baseTextBeforeRecording = input.value.trim();
+      }
+
+      autoResize();
+      updateSendBtnState();
+    };
+
+    rec.onerror = function(event) {
+      console.warn('Speech recognition error:', event.error);
+      // 'not-allowed' / 'service-not-allowed' mean the browser blocked mic
+      // access for this site specifically (separate from OS-level mic
+      // permission). Nothing more to do here besides resetting state so
+      // the button is usable again on the next tap.
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
+    };
+
+    rec.onend = function() {
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
+    };
+
+    return rec;
+  }
+
+  function startRecording() {
+    if (!speechSupported) return;
+    if (recognitionState !== 'inactive') return; // already starting/active/stopping — ignore
+
+    baseTextBeforeRecording = input.value.trim();
+    recognitionState = 'starting';
+    recognition = createRecognition();
+    micBtn.classList.add('recording');
+
+    try {
+      recognition.start();
+    } catch (err) {
+      console.warn('Could not start speech recognition:', err);
+      recognitionState = 'inactive';
+      micBtn.classList.remove('recording');
+      recognition = null;
+    }
+  }
+
+  function stopRecording() {
+    if (recognitionState !== 'active' && recognitionState !== 'starting') return;
+    recognitionState = 'stopping';
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (err) {
+        // onend/onerror will still fire and fully reset state
+      }
+    }
+  }
+
+  micBtn.addEventListener('click', function() {
+    if (recognitionState === 'inactive') {
+      startRecording();
+    } else if (recognitionState === 'active') {
+      stopRecording();
+    }
+    // if state is 'starting' or 'stopping', ignore the tap — this is what
+    // prevents rapid double-taps from causing overlapping start()/stop() calls
+  });
+
+  removeImageBtn.addEventListener('click', function() {
+    pendingImage = null;
+    imagePreviewImg.src = '';
+    imagePreviewBar.classList.remove('visible');
+    updateSendBtnState();
+  });
+
+  // ---------- Sending messages (streaming) ----------
+
+  input.addEventListener('input', function() {
+    autoResize();
+    updateSendBtnState();
+  });
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    const imageToSend = pendingImage;
+
+    if (!text && !imageToSend) return;
+    if (isWaiting) return;
+
+    addMessage(text, 'user', false, imageToSend);
+    input.value = '';
+    autoResize();
+
+    pendingImage = null;
+    imagePreviewImg.src = '';
+    imagePreviewBar.classList.remove('visible');
+
+    isWaiting = true;
+    sendBtn.disabled = true;
+    updateSendBtnState();
+    addThinkingBubble();
+
+    let aiBubble = null;
+    let accumulated = '';
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message: text, messages: buildMessagesForApi() })
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error('Request failed with status ' + response.status);
+      }
+
+      const contentType = response.headers.get('Content-Type') || '';
+
+      if (contentType.includes('application/json')) {
+        // Non-streaming reply (used for image requests)
+        const data = await response.json();
+        removeThinkingBubble();
+        accumulated = data.reply || '(No reply received)';
+        addMessage(accumulated, 'ai', true);
+        persistMessage(accumulated, 'ai');
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+
+          const dataStr = trimmed.slice(5).trim();
+          if (dataStr === '[DONE]' || dataStr === '') continue;
+
+          try {
+            const parsed = JSON.parse(dataStr);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              if (!aiBubble) {
+                removeThinkingBubble();
+                aiBubble = addMessage('', 'ai', true);
+              }
+              accumulated += delta;
+              aiBubble.textContent = accumulated;
+              scrollToBottom();
+            }
+          } catch (e) {
+            // ignore incomplete/malformed JSON fragments
+          }
+        }
+      }
+
+      removeThinkingBubble();
+
+      if (!accumulated) {
+        accumulated = '(No reply received)';
+        addMessage(accumulated, 'ai', true);
+      }
+
+      persistMessage(accumulated, 'ai');
+
+    } catch (err) {
+      removeThinkingBubble();
+      addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+    } finally {
+      isWaiting = false;
+      sendBtn.disabled = false;
+      updateSendBtnState();
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  newChatBtn.addEventListener('click', startNewConversation);
+
+  initConversations();
+  updateSendBtnState();
+  input.focus();
