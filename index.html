@@ -494,7 +494,10 @@
   }
 
   .speaker-btn,
-  .copy-btn {
+  .copy-btn,
+  .like-btn,
+  .dislike-btn,
+  .share-btn {
     background: none;
     border: none;
     color: #9b9b9b;
@@ -507,7 +510,10 @@
   }
 
   .speaker-btn:hover,
-  .copy-btn:hover {
+  .copy-btn:hover,
+  .like-btn:hover,
+  .dislike-btn:hover,
+  .share-btn:hover {
     background: #3d3d3d;
     color: #fff;
   }
@@ -516,14 +522,28 @@
     color: #2f6fed;
   }
 
+  .like-btn.active {
+    color: #2f6fed;
+  }
+
+  .dislike-btn.active {
+    color: #e5484d;
+  }
+
   .speaker-btn:disabled,
-  .copy-btn:disabled {
+  .copy-btn:disabled,
+  .like-btn:disabled,
+  .dislike-btn:disabled,
+  .share-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
   }
 
   .speaker-btn svg,
-  .copy-btn svg {
+  .copy-btn svg,
+  .like-btn svg,
+  .dislike-btn svg,
+  .share-btn svg {
     width: 15px;
     height: 15px;
     display: block;
@@ -1261,6 +1281,121 @@
     return btn;
   }
 
+  // ---------- Like / Dislike buttons ----------
+
+  const LIKE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"></path>' +
+    '<path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>' +
+    '</svg>';
+
+  const DISLIKE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z"></path>' +
+    '<path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"></path>' +
+    '</svg>';
+
+  function createLikeDislikeButtons() {
+    const likeBtn = document.createElement('button');
+    likeBtn.type = 'button';
+    likeBtn.className = 'like-btn';
+    likeBtn.innerHTML = LIKE_ICON;
+    likeBtn.setAttribute('aria-label', 'Like this response');
+
+    const dislikeBtn = document.createElement('button');
+    dislikeBtn.type = 'button';
+    dislikeBtn.className = 'dislike-btn';
+    dislikeBtn.innerHTML = DISLIKE_ICON;
+    dislikeBtn.setAttribute('aria-label', 'Dislike this response');
+
+    likeBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const nowActive = !likeBtn.classList.contains('active');
+      likeBtn.classList.toggle('active', nowActive);
+      if (nowActive) dislikeBtn.classList.remove('active');
+    });
+
+    dislikeBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      const nowActive = !dislikeBtn.classList.contains('active');
+      dislikeBtn.classList.toggle('active', nowActive);
+      if (nowActive) likeBtn.classList.remove('active');
+    });
+
+    return { likeBtn: likeBtn, dislikeBtn: dislikeBtn };
+  }
+
+  // ---------- Share button ----------
+
+  const SHARE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="18" cy="5" r="3"></circle>' +
+    '<circle cx="6" cy="12" r="3"></circle>' +
+    '<circle cx="18" cy="19" r="3"></circle>' +
+    '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>' +
+    '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>' +
+    '</svg>';
+
+  function createShareButton(text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'share-btn';
+    btn.innerHTML = SHARE_ICON;
+    btn.setAttribute('aria-label', 'Share this response');
+
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+
+      if (navigator.share) {
+        navigator.share({ text: text }).catch(function() {
+          // User cancelled the share sheet, or it otherwise failed — no
+          // fallback needed here, cancellation is a normal outcome.
+        });
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+          .then(function() { showCopyToast(btn.shareToastEl); })
+          .catch(function() {
+            fallbackCopy(text);
+            showCopyToast(btn.shareToastEl);
+          });
+      } else {
+        fallbackCopy(text);
+        showCopyToast(btn.shareToastEl);
+      }
+    });
+
+    return btn;
+  }
+
+  // ---------- Shared message actions row ----------
+
+  function buildMessageActions(text) {
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+
+    const speakerBtn = createSpeakerButton(text);
+    actions.appendChild(speakerBtn);
+
+    const copyBtn = createCopyButton(text);
+    actions.appendChild(copyBtn);
+
+    const { likeBtn, dislikeBtn } = createLikeDislikeButtons();
+    actions.appendChild(likeBtn);
+    actions.appendChild(dislikeBtn);
+
+    const shareBtn = createShareButton(text);
+    actions.appendChild(shareBtn);
+
+    const toast = document.createElement('span');
+    toast.className = 'copy-toast';
+    toast.textContent = 'Copied!';
+    actions.appendChild(toast);
+    copyBtn.copyToastEl = toast;
+    shareBtn.shareToastEl = toast;
+
+    return { actions: actions, speakerBtn: speakerBtn };
+  }
+
   // ---------- Rendering ----------
 
   function scrollToBottom() {
@@ -1291,24 +1426,10 @@
       bubble.appendChild(textSpan);
     }
 
-    // Speaker + copy buttons appear under every AI message that has text —
-    // user messages never get these.
+    // Speaker/copy/like/dislike/share buttons appear under every AI message
+    // that has text — user messages never get these.
     if (sender === 'ai' && text) {
-      const actions = document.createElement('div');
-      actions.className = 'message-actions';
-
-      const speakerBtn = createSpeakerButton(text);
-      actions.appendChild(speakerBtn);
-
-      const copyBtn = createCopyButton(text);
-      actions.appendChild(copyBtn);
-
-      const copyToast = document.createElement('span');
-      copyToast.className = 'copy-toast';
-      copyToast.textContent = 'Copied!';
-      actions.appendChild(copyToast);
-      copyBtn.copyToastEl = copyToast;
-
+      const { actions, speakerBtn } = buildMessageActions(text);
       bubble.appendChild(actions);
       bubble.speakerButtonEl = speakerBtn;
     }
@@ -1946,21 +2067,7 @@
         // never attached the actions row to it — attach one now that the
         // full text is known. Safe to append here since nothing overwrites
         // aiBubble's contents again after this point.
-        const actions = document.createElement('div');
-        actions.className = 'message-actions';
-
-        const speakerBtn = createSpeakerButton(accumulated);
-        actions.appendChild(speakerBtn);
-
-        const copyBtn = createCopyButton(accumulated);
-        actions.appendChild(copyBtn);
-
-        const copyToast = document.createElement('span');
-        copyToast.className = 'copy-toast';
-        copyToast.textContent = 'Copied!';
-        actions.appendChild(copyToast);
-        copyBtn.copyToastEl = copyToast;
-
+        const { actions, speakerBtn } = buildMessageActions(accumulated);
         aiBubble.appendChild(actions);
         aiBubble.speakerButtonEl = speakerBtn;
       }
