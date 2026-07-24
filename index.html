@@ -406,6 +406,72 @@
     background: #2660d1;
   }
 
+  #search-toggle-row {
+    display: flex;
+    padding: 0 2px;
+  }
+
+  #search-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 16px;
+    border: 1px solid #3d3d3d;
+    background: #2f2f2f;
+    color: #d4d4d4;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
+  #search-toggle-btn svg {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+  }
+
+  #search-toggle-btn:hover {
+    background: #3d3d3d;
+  }
+
+  #search-toggle-btn.active {
+    background: rgba(47, 111, 237, 0.15);
+    border-color: #2f6fed;
+    color: #6ea8ff;
+  }
+
+  .message-sources {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #3d3d3d;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .message-sources-label {
+    font-size: 11px;
+    color: #8e8e8e;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+
+  .source-link {
+    font-size: 13px;
+    color: #6ea8ff;
+    text-decoration: none;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .source-link:hover {
+    text-decoration: underline;
+  }
+
   #input-row {
     display: flex;
     align-items: flex-end;
@@ -755,6 +821,16 @@
           </svg>
         </button>
       </div>
+      <div id="search-toggle-row">
+        <button id="search-toggle-btn" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+          </svg>
+          <span>Search</span>
+        </button>
+      </div>
       <div id="input-row">
         <button id="attach-btn" type="button" aria-label="Attach image">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -802,6 +878,7 @@
   const sidebarBackdrop = document.getElementById('sidebar-backdrop');
   const menuBtn = document.getElementById('menu-btn');
   const attachBtn = document.getElementById('attach-btn');
+  const searchToggleBtn = document.getElementById('search-toggle-btn');
   const micBtn = document.getElementById('mic-btn');
   const fileInput = document.getElementById('file-input');
   const imagePreviewBar = document.getElementById('image-preview-bar');
@@ -816,6 +893,14 @@
   const lightboxClose = document.getElementById('lightbox-close');
 
   let pendingImage = null; // base64 data URL of image staged for the next message
+
+  const WEB_SEARCH_KEY = 'tenai_web_search_enabled';
+  let webSearchEnabled = false;
+  try {
+    webSearchEnabled = localStorage.getItem(WEB_SEARCH_KEY) === 'true';
+  } catch (err) {
+    webSearchEnabled = false;
+  }
 
   const ACTIVE_ID_KEY = 'tenai_active_id';
   const WELCOME_TEXT = "👋 Hi! I'm TenAI. How can I help you today?";
@@ -975,12 +1060,13 @@
     return conversationsCache[activeId] || null;
   }
 
-  function persistMessage(text, sender, image) {
+  function persistMessage(text, sender, image, sources) {
     const conv = conversationsCache[activeId];
     if (!conv) return;
 
     const entry = { text: text, sender: sender };
     if (image) entry.image = image;
+    if (sources && sources.length > 0) entry.sources = sources;
 
     conv.messages.push(entry);
     conv.updatedAt = Date.now();
@@ -1247,10 +1333,12 @@
     document.body.removeChild(textarea);
   }
 
-  function showCopyToast(toastEl) {
+  function showActionToast(toastEl, message) {
     if (!toastEl) return;
+    toastEl.textContent = message;
+    if (toastEl._hideTimer) clearTimeout(toastEl._hideTimer);
     toastEl.classList.add('visible');
-    setTimeout(function() {
+    toastEl._hideTimer = setTimeout(function() {
       toastEl.classList.remove('visible');
     }, 2000);
   }
@@ -1267,14 +1355,14 @@
 
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-          .then(function() { showCopyToast(btn.copyToastEl); })
+          .then(function() { showActionToast(btn.copyToastEl, 'Copied!'); })
           .catch(function() {
             fallbackCopy(text);
-            showCopyToast(btn.copyToastEl);
+            showActionToast(btn.copyToastEl, 'Copied!');
           });
       } else {
         fallbackCopy(text);
-        showCopyToast(btn.copyToastEl);
+        showActionToast(btn.copyToastEl, 'Copied!');
       }
     });
 
@@ -1309,26 +1397,26 @@
     dislikeBtn.setAttribute('aria-label', 'Dislike this response');
 
     likeBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    const nowActive = !likeBtn.classList.contains('active');
-    likeBtn.classList.toggle('active', nowActive);
-
-    if (nowActive) {
-        dislikeBtn.classList.remove('active');
-        showToast("Thanks for your feedback");
-    }
-});
+      e.stopPropagation();
+      if (likeBtn.classList.contains('active')) {
+        // Tapping an already-active Like just un-likes it — no toast.
+        likeBtn.classList.remove('active');
+        return;
+      }
+      likeBtn.classList.add('active');
+      dislikeBtn.classList.remove('active');
+      showActionToast(likeBtn.toastEl, 'Thanks for your feedback!');
+    });
 
     dislikeBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    const nowActive = !dislikeBtn.classList.contains('active');
-    dislikeBtn.classList.toggle('active', nowActive);
-
-    if (nowActive) {
-        likeBtn.classList.remove('active');
-        showToast("Thanks for your feedback");
-    }
-});
+      e.stopPropagation();
+      if (dislikeBtn.classList.contains('active')) {
+        // Tapping an already-active Dislike just un-dislikes it.
+        dislikeBtn.classList.remove('active');
+        return;
+      }
+      openDislikeModal(dislikeBtn, likeBtn, dislikeBtn.toastEl);
+    });
 
     return { likeBtn: likeBtn, dislikeBtn: dislikeBtn };
   }
@@ -1336,53 +1424,20 @@
   // ---------- Share button ----------
 
   const SHARE_ICON =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-  '<circle cx="18" cy="5" r="3"></circle>' +
-  '<circle cx="6" cy="12" r="3"></circle>' +
-  '<circle cx="18" cy="19" r="3"></circle>' +
-  '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>' +
-  '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>' +
-  '</svg>';
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="18" cy="5" r="3"></circle>' +
+    '<circle cx="6" cy="12" r="3"></circle>' +
+    '<circle cx="18" cy="19" r="3"></circle>' +
+    '<line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>' +
+    '<line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>' +
+    '</svg>';
 
-// 👇 NEW FUNCTION STARTS HERE
-function showToast(message) {
-  const toast = document.createElement("div");
-  toast.textContent = message;
-
-  toast.style.position = "fixed";
-  toast.style.bottom = "80px";
-  toast.style.left = "50%";
-  toast.style.transform = "translateX(-50%)";
-  toast.style.background = "#202123";
-  toast.style.color = "#fff";
-  toast.style.padding = "10px 18px";
-  toast.style.borderRadius = "20px";
-  toast.style.fontSize = "14px";
-  toast.style.zIndex = "999999";
-  toast.style.opacity = "0";
-  toast.style.transition = "opacity 0.25s";
-
-  document.body.appendChild(toast);
-
-  requestAnimationFrame(() => {
-    toast.style.opacity = "1";
-  });
-
-  setTimeout(() => {
-    toast.style.opacity = "0";
-    setTimeout(() => {
-      toast.remove();
-    }, 250);
-  }, 1800);
-}
-// 👆 NEW FUNCTION ENDS HERE
-
-function createShareButton(text) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'share-btn';
-  btn.innerHTML = SHARE_ICON;
-  btn.setAttribute('aria-label', 'Share this response');
+  function createShareButton(text) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'share-btn';
+    btn.innerHTML = SHARE_ICON;
+    btn.setAttribute('aria-label', 'Share this response');
 
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -1394,14 +1449,14 @@ function createShareButton(text) {
         });
       } else if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-          .then(function() { showCopyToast(btn.shareToastEl); })
+          .then(function() { showActionToast(btn.shareToastEl, 'Copied!'); })
           .catch(function() {
             fallbackCopy(text);
-            showCopyToast(btn.shareToastEl);
+            showActionToast(btn.shareToastEl, 'Copied!');
           });
       } else {
         fallbackCopy(text);
-        showCopyToast(btn.shareToastEl);
+        showActionToast(btn.shareToastEl, 'Copied!');
       }
     });
 
@@ -1429,10 +1484,11 @@ function createShareButton(text) {
 
     const toast = document.createElement('span');
     toast.className = 'copy-toast';
-    toast.textContent = 'Copied!';
     actions.appendChild(toast);
     copyBtn.copyToastEl = toast;
     shareBtn.shareToastEl = toast;
+    likeBtn.toastEl = toast;
+    dislikeBtn.toastEl = toast;
 
     return { actions: actions, speakerBtn: speakerBtn };
   }
@@ -1443,7 +1499,7 @@ function createShareButton(text) {
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  function createBubble(text, sender, image) {
+  function createBubble(text, sender, image, sources) {
     const row = document.createElement('div');
     row.className = 'message-row ' + sender;
 
@@ -1467,6 +1523,11 @@ function createShareButton(text) {
       bubble.appendChild(textSpan);
     }
 
+    if (sender === 'ai' && sources && sources.length > 0) {
+      const sourcesEl = buildSourcesElement(sources);
+      if (sourcesEl) bubble.appendChild(sourcesEl);
+    }
+
     // Speaker/copy/like/dislike/share buttons appear under every AI message
     // that has text — user messages never get these.
     if (sender === 'ai' && text) {
@@ -1479,13 +1540,13 @@ function createShareButton(text) {
     return { row: row, bubble: bubble };
   }
 
-  function addMessage(text, sender, skipPersist, image) {
-    const { row, bubble } = createBubble(text, sender, image);
+  function addMessage(text, sender, skipPersist, image, sources) {
+    const { row, bubble } = createBubble(text, sender, image, sources);
     chatWindow.appendChild(row);
     scrollToBottom();
 
     if (!skipPersist) {
-      persistMessage(text, sender, image);
+      persistMessage(text, sender, image, sources);
     }
 
     return bubble;
@@ -1494,7 +1555,7 @@ function createShareButton(text) {
   function renderChatWindow(messages) {
     chatWindow.innerHTML = '';
     messages.forEach(function(msg) {
-      const { row } = createBubble(msg.text, msg.sender, msg.image);
+      const { row } = createBubble(msg.text, msg.sender, msg.image, msg.sources);
       chatWindow.appendChild(row);
     });
     scrollToBottom();
@@ -1777,6 +1838,112 @@ function createShareButton(text) {
 
   sidebarBackdrop.addEventListener('click', closeSidebar);
 
+  // ---------- Web search (DuckDuckGo) ----------
+  // Completely independent of the chat request — api/chat.js is never
+  // modified or made aware this happened. Search results are folded into
+  // the outgoing message text for this one request only.
+
+  function setSearchToggleState(active) {
+    searchToggleBtn.classList.toggle('active', active);
+    searchToggleBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+
+  setSearchToggleState(webSearchEnabled);
+
+  searchToggleBtn.addEventListener('click', function() {
+    webSearchEnabled = !webSearchEnabled;
+    setSearchToggleState(webSearchEnabled);
+    try {
+      localStorage.setItem(WEB_SEARCH_KEY, webSearchEnabled ? 'true' : 'false');
+    } catch (err) {
+      // fail silently — toggle still works for this session
+    }
+  });
+
+  async function searchWeb(query) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function() { controller.abort(); }, 9000);
+
+    try {
+      const response = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: query }),
+        signal: controller.signal
+      });
+
+      if (!response.ok) return [];
+
+      const data = await response.json();
+      return Array.isArray(data.results) ? data.results : [];
+    } catch (err) {
+      console.warn('Web search failed:', err);
+      return [];
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  function buildSearchContextText(query, results) {
+    let context =
+      'Use the following web search results to help answer the user\'s question. ' +
+      'Cite relevant facts naturally in your answer. You do not need to list the ' +
+      'URLs yourself — sources are already shown separately to the user.\n\n' +
+      'Web search results for: "' + query + '"\n\n';
+
+    results.forEach(function(r, i) {
+      context += (i + 1) + '. ' + r.title + '\n';
+      if (r.snippet) context += r.snippet + '\n';
+      context += r.url + '\n\n';
+    });
+
+    context += 'User\'s question: ' + query;
+    return context;
+  }
+
+  function addSearchingBubble() {
+    const row = document.createElement('div');
+    row.className = 'message-row ai';
+    row.id = 'searching-row';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble thinking';
+    bubble.innerHTML = 'Searching the web<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+
+    row.appendChild(bubble);
+    chatWindow.appendChild(row);
+    scrollToBottom();
+  }
+
+  function removeSearchingBubble() {
+    const row = document.getElementById('searching-row');
+    if (row) row.remove();
+  }
+
+  function buildSourcesElement(sources) {
+    if (!sources || sources.length === 0) return null;
+
+    const container = document.createElement('div');
+    container.className = 'message-sources';
+
+    const label = document.createElement('div');
+    label.className = 'message-sources-label';
+    label.textContent = 'Sources';
+    container.appendChild(label);
+
+    sources.forEach(function(s) {
+      const link = document.createElement('a');
+      link.className = 'source-link';
+      link.href = s.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = s.title;
+      container.appendChild(link);
+    });
+
+    return container;
+  }
+
   // ---------- Image attach ----------
 
   attachBtn.addEventListener('click', function() {
@@ -2031,6 +2198,32 @@ function createShareButton(text) {
     isWaiting = true;
     sendBtn.disabled = true;
     updateSendBtnState();
+
+    // Web search only applies to text questions (not image uploads), and is
+    // completely invisible to api/chat.js — it just receives a longer
+    // question. The user's own message bubble/history always shows their
+    // original text, never the augmented search prompt.
+    let searchResults = [];
+    let messagesForApi = null;
+
+    if (webSearchEnabled && text && !imageToSend) {
+      addSearchingBubble();
+      searchResults = await searchWeb(text);
+      removeSearchingBubble();
+
+      if (searchResults.length > 0) {
+        const baseMessages = buildMessagesForApi();
+        const augmentedText = buildSearchContextText(text, searchResults);
+        messagesForApi = baseMessages.slice(0, baseMessages.length - 1).concat([
+          { role: 'user', content: augmentedText }
+        ]);
+      }
+    }
+
+    if (!messagesForApi) {
+      messagesForApi = buildMessagesForApi();
+    }
+
     addThinkingBubble();
 
     let aiBubble = null;
@@ -2042,7 +2235,7 @@ function createShareButton(text) {
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: text, messages: buildMessagesForApi() })
+        body: JSON.stringify({ message: text, messages: messagesForApi })
       });
 
       if (!response.ok || !response.body) {
@@ -2105,17 +2298,23 @@ function createShareButton(text) {
         addMessage(accumulated, 'ai', true);
       } else if (aiBubble) {
         // aiBubble was built with empty text during streaming, so createBubble
-        // never attached the actions row to it — attach one now that the
-        // full text is known. Safe to append here since nothing overwrites
-        // aiBubble's contents again after this point.
+        // never attached the sources block or actions row to it — attach
+        // them now that the full text is known. Safe to append here since
+        // nothing overwrites aiBubble's contents again after this point.
+        if (searchResults.length > 0) {
+          const sourcesEl = buildSourcesElement(searchResults);
+          if (sourcesEl) aiBubble.appendChild(sourcesEl);
+        }
+
         const { actions, speakerBtn } = buildMessageActions(accumulated);
         aiBubble.appendChild(actions);
         aiBubble.speakerButtonEl = speakerBtn;
       }
 
-      persistMessage(accumulated, 'ai');
+      persistMessage(accumulated, 'ai', null, searchResults);
 
     } catch (err) {
+      removeSearchingBubble();
       removeThinkingBubble();
       addMessage('Error: could not reach TenAI. Please try again.', 'ai');
     } finally {
