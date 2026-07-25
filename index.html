@@ -1944,6 +1944,68 @@
     return container;
   }
 
+  function messageNeedsWebSearch(text) {
+    if (!text) return false;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+
+    const lower = trimmed.toLowerCase();
+
+    // Ordinary chit-chat should never trigger a search, even with a
+    // trailing question mark ("how are you?", "ok?").
+    const chitchatPatterns = [
+      /^(hi|hello|hey|yo|sup|hiya)\b/,
+      /^good\s?(morning|afternoon|evening|night)\b/,
+      /^(thanks|thank you|thx|ty)\b/,
+      /^(bye|goodbye|see ya|see you|later)\b/,
+      /^how('?s| is| are) it going\b/,
+      /^how are you\b/,
+      /^what'?s up\b/,
+      /^(ok|okay|cool|nice|great|awesome|lol|haha|hehe)\b/,
+      /^(yes|no|yep|nope|sure|maybe)\b/,
+      /^(good ?night|love you|i love you)\b/
+    ];
+    for (let i = 0; i < chitchatPatterns.length; i++) {
+      if (chitchatPatterns[i].test(lower)) return false;
+    }
+
+    // Very short messages with no question mark are unlikely to need a
+    // search ("cool", "nice one", "haha thanks").
+    if (trimmed.length <= 12 && trimmed.indexOf('?') === -1) return false;
+
+    // Strong search-intent patterns: people, companies, events, news,
+    // locations, social accounts, "current info" style phrasing.
+    const searchIntentPatterns = [
+      /\bwho\s+is\b/, /\bwho'?s\b/, /\bwho\s+are\b/,
+      /\bwhat\s+is\b/, /\bwhat'?s\b/,
+      /\bwhere\s+is\b/, /\bwhere'?s\b/,
+      /\bwhen\s+(is|did|was|does)\b/,
+      /\bhow\s+many\b/, /\bhow\s+much\b/,
+      /\btell\s+me\s+about\b/,
+      /\bsearch\s+for\b/, /\blook\s+up\b/, /\bfind\s+(info|information)\b/,
+      /\blatest\b/, /\brecent\b/, /\bcurrent\b/, /\btoday'?s\b/, /\bthis\s+week\b/,
+      /\bnews\b/, /\bweather\b/, /\bscore\b/, /\brelease\s+date\b/,
+      /\bceo\s+of\b/, /\bfounder\s+of\b/, /\bfounded\b/, /\bborn\b/,
+      /\bwebsite\s+of\b/, /\binstagram\b/, /\btwitter\b/, /\btiktok\b/,
+      /\byoutube\b/, /\bfacebook\b/, /\bx\.com\b/,
+      /\bstock\s+price\b/, /\baddress\s+of\b/, /\blocation\s+of\b/,
+      /\bartist\b/, /\bsinger\b/, /\bactor\b/, /\bactress\b/, /\bcompany\b/
+    ];
+    for (let i = 0; i < searchIntentPatterns.length; i++) {
+      if (searchIntentPatterns[i].test(lower)) return true;
+    }
+
+    // Social media handle mention, e.g. "@marleyfedexz"
+    if (/@\w+/.test(trimmed)) return true;
+
+    // A capitalized "Full Name"-style phrase combined with a question mark
+    // — catches named-entity questions the keyword list above might miss.
+    const hasProperNoun = /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/.test(trimmed);
+    if (hasProperNoun && trimmed.indexOf('?') !== -1) return true;
+
+    return false;
+  }
+
   // ---------- Image attach ----------
 
   attachBtn.addEventListener('click', function() {
@@ -2199,14 +2261,19 @@
     sendBtn.disabled = true;
     updateSendBtnState();
 
-    // Web search only applies to text questions (not image uploads), and is
-    // completely invisible to api/chat.js — it just receives a longer
+    // Web search runs automatically when the message looks like it needs
+    // current information (people, companies, news, locations, social
+    // accounts, etc.) — the toggle is now an optional manual override, not
+    // a requirement. Only applies to text questions, not image uploads, and
+    // is completely invisible to api/chat.js — it just receives a longer
     // question. The user's own message bubble/history always shows their
     // original text, never the augmented search prompt.
     let searchResults = [];
     let messagesForApi = null;
 
-    if (webSearchEnabled && text && !imageToSend) {
+    const shouldSearch = text && !imageToSend && (webSearchEnabled || messageNeedsWebSearch(text));
+
+    if (shouldSearch) {
       addSearchingBubble();
       searchResults = await searchWeb(text);
       removeSearchingBubble();
