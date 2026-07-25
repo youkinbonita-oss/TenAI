@@ -2006,6 +2006,45 @@
     return false;
   }
 
+  function responseShowsUncertainty(replyText) {
+    if (!replyText || replyText.trim().length === 0) return true;
+
+    const lower = replyText.toLowerCase();
+    if (lower.indexOf('no reply received') !== -1) return true;
+
+    const uncertaintyPhrases = [
+      "i don't have information", "i do not have information",
+      "i don't have access to real-time", "i do not have access to real-time",
+      "i don't have real-time", "i do not have real-time",
+      "as of my knowledge cutoff", "my knowledge cutoff", "my training data",
+      "i'm not aware of", "i am not aware of",
+      "i couldn't find", "i could not find",
+      "no information available", "not familiar with",
+      "i don't know who", "i do not know who",
+      "i'm unable to provide current", "i am unable to provide current",
+      "i don't have details", "i do not have details",
+      "i cannot provide current", "i can't provide current",
+      "i don't have up-to-date", "i do not have up-to-date",
+      "i'm not certain", "i am not certain",
+      "i'm not sure who", "i am not sure who",
+      "there is no widely known", "i have no information",
+      "i cannot confirm", "i can't confirm",
+      "without access to current", "without real-time",
+      "i do not have the ability to browse", "i don't have the ability to browse",
+      "i'm not able to browse", "i am not able to browse",
+      "i don't have specific information", "i do not have specific information",
+      "i couldn't locate", "i could not locate",
+      "doesn't appear to be", "does not appear to be",
+      "i'm not familiar", "i am not familiar"
+    ];
+
+    for (let i = 0; i < uncertaintyPhrases.length; i++) {
+      if (lower.indexOf(uncertaintyPhrases[i]) !== -1) return true;
+    }
+
+    return false;
+  }
+
   // ---------- Image attach ----------
 
   attachBtn.addEventListener('click', function() {
@@ -2240,61 +2279,14 @@
     updateSendBtnState();
   });
 
-  async function sendMessage() {
-    const text = input.value.trim();
-    const imageToSend = pendingImage;
-
-    if (!text && !imageToSend) return;
-    if (isWaiting) return;
-
-    stopSpeaking();
-    hideVoiceReviewBar();
-    addMessage(text, 'user', false, imageToSend);
-    input.value = '';
-    autoResize();
-
-    pendingImage = null;
-    imagePreviewImg.src = '';
-    imagePreviewBar.classList.remove('visible');
-
-    isWaiting = true;
-    sendBtn.disabled = true;
-    updateSendBtnState();
-
-    // Web search runs automatically when the message looks like it needs
-    // current information (people, companies, news, locations, social
-    // accounts, etc.) — the toggle is now an optional manual override, not
-    // a requirement. Only applies to text questions, not image uploads, and
-    // is completely invisible to api/chat.js — it just receives a longer
-    // question. The user's own message bubble/history always shows their
-    // original text, never the augmented search prompt.
-    let searchResults = [];
-    let messagesForApi = null;
-
-    const shouldSearch = text && !imageToSend && (webSearchEnabled || messageNeedsWebSearch(text));
-
-    if (shouldSearch) {
-      addSearchingBubble();
-      searchResults = await searchWeb(text);
-      removeSearchingBubble();
-
-      if (searchResults.length > 0) {
-        const baseMessages = buildMessagesForApi();
-        const augmentedText = buildSearchContextText(text, searchResults);
-        messagesForApi = baseMessages.slice(0, baseMessages.length - 1).concat([
-          { role: 'user', content: augmentedText }
-        ]);
-      }
-    }
-
-    if (!messagesForApi) {
-      messagesForApi = buildMessagesForApi();
-    }
-
-    addThinkingBubble();
-
+  // Runs one streaming chat request and renders the reply into a new bubble.
+  // Does NOT persist to storage — the caller decides whether to keep this
+  // answer (persist it) or discard it (e.g. because it was uncertain and
+  // is about to be regenerated with search results).
+  async function performChatRequest(messagesForApi, sourcesForReply) {
     let aiBubble = null;
     let accumulated = '';
+    let ok = true;
 
     try {
       const response = await fetch('/api/chat', {
@@ -2302,23 +2294,11 @@
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: text, messages: messagesForApi })
+        body: JSON.stringify({ message: '', messages: messagesForApi })
       });
 
       if (!response.ok || !response.body) {
         throw new Error('Request failed with status ' + response.status);
-      }
-
-      const contentType = response.headers.get('Content-Type') || '';
-
-      if (contentType.includes('application/json')) {
-        // Non-streaming reply (used for image requests)
-        const data = await response.json();
-        removeThinkingBubble();
-        accumulated = data.reply || '(No reply received)';
-        addMessage(accumulated, 'ai', true);
-        persistMessage(accumulated, 'ai');
-        return;
       }
 
       const reader = response.body.getReader();
@@ -2346,6 +2326,7 @@
             if (delta) {
               if (!aiBubble) {
                 removeThinkingBubble();
+                removeSearchingBubble();
                 aiBubble = addMessage('', 'ai', true);
               }
               accumulated += delta;
@@ -2359,17 +2340,14 @@
       }
 
       removeThinkingBubble();
+      removeSearchingBubble();
 
       if (!accumulated) {
         accumulated = '(No reply received)';
-        addMessage(accumulated, 'ai', true);
+        aiBubble = addMessage(accumulated, 'ai', true);
       } else if (aiBubble) {
-        // aiBubble was built with empty text during streaming, so createBubble
-        // never attached the sources block or actions row to it — attach
-        // them now that the full text is known. Safe to append here since
-        // nothing overwrites aiBubble's contents again after this point.
-        if (searchResults.length > 0) {
-          const sourcesEl = buildSourcesElement(searchResults);
+        if (sourcesForReply && sourcesForReply.length > 0) {
+          const sourcesEl = buildSourcesElement(sourcesForReply);
           if (sourcesEl) aiBubble.appendChild(sourcesEl);
         }
 
@@ -2378,7 +2356,132 @@
         aiBubble.speakerButtonEl = speakerBtn;
       }
 
-      persistMessage(accumulated, 'ai', null, searchResults);
+    } catch (err) {
+      ok = false;
+      removeThinkingBubble();
+      removeSearchingBubble();
+    }
+
+    return { accumulated: accumulated, aiBubble: aiBubble, ok: ok };
+  }
+
+  async function runSearchAndRegenerate(text) {
+    addSearchingBubble();
+    const searchResults = await searchWeb(text);
+    removeSearchingBubble();
+
+    let messagesForApi = buildMessagesForApi();
+    if (searchResults.length > 0) {
+      const augmentedText = buildSearchContextText(text, searchResults);
+      messagesForApi = messagesForApi.slice(0, messagesForApi.length - 1).concat([
+        { role: 'user', content: augmentedText }
+      ]);
+    }
+
+    addThinkingBubble();
+    const result = await performChatRequest(messagesForApi, searchResults);
+
+    if (result.ok) {
+      persistMessage(result.accumulated, 'ai', null, searchResults);
+    } else {
+      addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+    }
+  }
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    const imageToSend = pendingImage;
+
+    if (!text && !imageToSend) return;
+    if (isWaiting) return;
+
+    stopSpeaking();
+    hideVoiceReviewBar();
+    addMessage(text, 'user', false, imageToSend);
+    input.value = '';
+    autoResize();
+
+    pendingImage = null;
+    imagePreviewImg.src = '';
+    imagePreviewBar.classList.remove('visible');
+
+    isWaiting = true;
+    sendBtn.disabled = true;
+    updateSendBtnState();
+
+    try {
+      // Image messages: unchanged non-streaming path, no search/confidence
+      // logic applies here at all.
+      if (imageToSend) {
+        addThinkingBubble();
+
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ message: text, messages: buildMessagesForApi() })
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error('Request failed with status ' + response.status);
+        }
+
+        const contentType = response.headers.get('Content-Type') || '';
+
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          removeThinkingBubble();
+          const accumulated = data.reply || '(No reply received)';
+          addMessage(accumulated, 'ai', true);
+          persistMessage(accumulated, 'ai');
+          return;
+        }
+
+        // Unexpected non-JSON response for an image request — treat as a
+        // normal streaming reply so nothing breaks.
+        const result = await performChatRequest(buildMessagesForApi(), null);
+        if (result.ok) {
+          persistMessage(result.accumulated, 'ai');
+        } else {
+          addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+        }
+        return;
+      }
+
+      // Text messages: automatic + confidence-based web search.
+      // The Search toggle still works as a manual override that forces a
+      // search regardless of the automatic checks below.
+      const forcedSearch = webSearchEnabled || messageNeedsWebSearch(text);
+
+      if (forcedSearch) {
+        await runSearchAndRegenerate(text);
+        return;
+      }
+
+      // No obvious search trigger — answer normally first (full streaming,
+      // no added delay). Only if the AI's own answer reads as uncertain do
+      // we discard it and automatically search + regenerate.
+      addThinkingBubble();
+      const firstAttempt = await performChatRequest(buildMessagesForApi(), null);
+
+      if (!firstAttempt.ok) {
+        addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+        return;
+      }
+
+      if (responseShowsUncertainty(firstAttempt.accumulated)) {
+        // Discard the uncertain answer — it was never persisted, so just
+        // remove its bubble from view — then search and regenerate.
+        if (firstAttempt.aiBubble && firstAttempt.aiBubble.parentElement) {
+          firstAttempt.aiBubble.parentElement.remove();
+        }
+        await runSearchAndRegenerate(text);
+        return;
+      }
+
+      // Confident answer — keep it as-is.
+      persistMessage(firstAttempt.accumulated, 'ai');
 
     } catch (err) {
       removeSearchingBubble();
