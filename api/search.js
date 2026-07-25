@@ -10,31 +10,53 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No search query provided" });
     }
 
-    const searchUrl = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query.trim());
+    if (!process.env.TAVILY_API_KEY) {
+      console.error("TAVILY_API_KEY is not set");
+      return res.status(500).json({ error: "Search is not configured" });
+    }
 
     const controller = new AbortController();
-    const timeout = setTimeout(function () { controller.abort(); }, 8000);
+    const timeoutId = setTimeout(function () { controller.abort(); }, 9000);
 
     let response;
     try {
-      response = await fetch(searchUrl, {
-        method: "GET",
+      response = await fetch("https://api.tavily.com/search", {
+        method: "POST",
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+          "Content-Type": "application/json"
         },
+        body: JSON.stringify({
+          api_key: process.env.TAVILY_API_KEY,
+          query: query.trim(),
+          search_depth: "basic",
+          max_results: 5,
+          include_answer: false
+        }),
         signal: controller.signal
       });
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
-      return res.status(502).json({ error: "Search request failed with status " + response.status });
+      const errText = await response.text().catch(function () { return ""; });
+      console.error("Tavily search failed:", response.status, errText);
+      return res.status(502).json({ error: "Search request failed" });
     }
 
-    const html = await response.text();
-    const results = parseDuckDuckGoHtml(html).slice(0, 5);
+    const data = await response.json();
+    const rawResults = Array.isArray(data.results) ? data.results : [];
+
+    const results = rawResults
+      .filter(function (r) { return r && r.title && r.url; })
+      .slice(0, 5)
+      .map(function (r) {
+        return {
+          title: r.title,
+          url: r.url,
+          snippet: r.content || ""
+        };
+      });
 
     return res.status(200).json({ results: results });
 
@@ -45,62 +67,4 @@ export default async function handler(req, res) {
     }
     return res.status(500).json({ error: error.message });
   }
-}
-
-function decodeHtmlEntities(str) {
-  return str
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'");
-}
-
-function stripTags(str) {
-  return decodeHtmlEntities(str.replace(/<[^>]*>/g, "")).trim();
-}
-
-function resolveDuckDuckGoUrl(href) {
-  try {
-    if (href.indexOf("//duckduckgo.com/l/?") === 0) {
-      const parsed = new URL("https:" + href);
-      const uddg = parsed.searchParams.get("uddg");
-      if (uddg) return decodeURIComponent(uddg);
-    }
-    if (href.indexOf("/l/?") === 0) {
-      const parsed = new URL("https://duckduckgo.com" + href);
-      const uddg = parsed.searchParams.get("uddg");
-      if (uddg) return decodeURIComponent(uddg);
-    }
-    if (href.indexOf("//") === 0) {
-      return "https:" + href;
-    }
-    return href;
-  } catch (err) {
-    return href;
-  }
-}
-
-function parseDuckDuckGoHtml(html) {
-  const results = [];
-
-  const titleRegex = /<a rel="nofollow" class="result__a" href="([^"]+)">([\s\S]*?)<\/a>/g;
-  const snippetRegex = /<a class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-
-  const titleMatches = [...html.matchAll(titleRegex)];
-  const snippetMatches = [...html.matchAll(snippetRegex)];
-
-  for (let i = 0; i < titleMatches.length; i++) {
-    const href = titleMatches[i][1];
-    const title = stripTags(titleMatches[i][2]);
-    const snippet = snippetMatches[i] ? stripTags(snippetMatches[i][1]) : "";
-    const url = resolveDuckDuckGoUrl(href);
-
-    if (title && url) {
-      results.push({ title: title, url: url, snippet: snippet });
-    }
-  }
-
-  return results;
 }
