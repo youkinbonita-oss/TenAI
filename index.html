@@ -1944,16 +1944,19 @@
     return container;
   }
 
-  function messageNeedsWebSearch(text) {
-    if (!text) return false;
-    const trimmed = text.trim();
-    if (trimmed.length === 0) return false;
+  // ---------- Message classification ----------
+  // Category C is a hard override — these messages never trigger search,
+  // not even through the confidence-based fallback in sendMessage.
+  // Category A and B trigger search immediately, no need to wait and see
+  // if the AI's answer sounds uncertain — we already know.
+  // Anything matching none of the three falls through to the confidence
+  // check (answer first, search only if the reply itself sounds unsure).
 
-    const lower = trimmed.toLowerCase();
+  function isCategoryC(text) {
+    const lower = text.toLowerCase().trim();
 
-    // Ordinary chit-chat should never trigger a search, even with a
-    // trailing question mark ("how are you?", "ok?").
-    const chitchatPatterns = [
+    const neverSearchPatterns = [
+      // Greetings / casual conversation
       /^(hi|hello|hey|yo|sup|hiya)\b/,
       /^good\s?(morning|afternoon|evening|night)\b/,
       /^(thanks|thank you|thx|ty)\b/,
@@ -1963,36 +1966,86 @@
       /^what'?s up\b/,
       /^(ok|okay|cool|nice|great|awesome|lol|haha|hehe)\b/,
       /^(yes|no|yep|nope|sure|maybe)\b/,
-      /^(good ?night|love you|i love you)\b/
+      /^(good ?night|love you|i love you)\b/,
+      // Jokes
+      /\btell me a joke\b/, /\bmake me laugh\b/, /\bknow any jokes\b/,
+      /\bsay something funny\b/,
+      // Creative writing
+      /\bwrite (a|an|me a)\s+(story|poem|song|essay|script|letter|speech)\b/,
+      /\bmake up a\b/, /\bfictional\b/, /\bimagine (a|that)\b/,
+      // Translation
+      /\btranslate\b/, /\bhow do you say\b/, /\bin (spanish|french|german|italian|portuguese|chinese|japanese|korean|arabic|hindi|russian)\b/,
+      // Simple math
+      /^[\d\s+\-*/().]+=?\??$/,
+      /\bwhat('?s| is)\s+\d+\s*[\+\-\*x×÷\/]\s*\d+/,
+      /\bcalculate\b/, /\bsolve (this|the) equation\b/
     ];
-    for (let i = 0; i < chitchatPatterns.length; i++) {
-      if (chitchatPatterns[i].test(lower)) return false;
+
+    for (let i = 0; i < neverSearchPatterns.length; i++) {
+      if (neverSearchPatterns[i].test(lower)) return true;
     }
 
-    // Very short messages with no question mark are unlikely to need a
-    // search ("cool", "nice one", "haha thanks").
-    if (trimmed.length <= 12 && trimmed.indexOf('?') === -1) return false;
+    // Very short messages with no question mark are almost always casual
+    // chat, not something needing a search.
+    if (text.trim().length <= 12 && text.indexOf('?') === -1) return true;
 
-    // Strong search-intent patterns: people, companies, events, news,
-    // locations, social accounts, "current info" style phrasing.
-    const searchIntentPatterns = [
-      /\bwho\s+is\b/, /\bwho'?s\b/, /\bwho\s+are\b/,
-      /\bwhat\s+is\b/, /\bwhat'?s\b/,
-      /\bwhere\s+is\b/, /\bwhere'?s\b/,
-      /\bwhen\s+(is|did|was|does)\b/,
-      /\bhow\s+many\b/, /\bhow\s+much\b/,
-      /\btell\s+me\s+about\b/,
-      /\bsearch\s+for\b/, /\blook\s+up\b/, /\bfind\s+(info|information)\b/,
-      /\blatest\b/, /\brecent\b/, /\bcurrent\b/, /\btoday'?s\b/, /\bthis\s+week\b/,
-      /\bnews\b/, /\bweather\b/, /\bscore\b/, /\brelease\s+date\b/,
-      /\bceo\s+of\b/, /\bfounder\s+of\b/, /\bfounded\b/, /\bborn\b/,
-      /\bwebsite\s+of\b/, /\binstagram\b/, /\btwitter\b/, /\btiktok\b/,
-      /\byoutube\b/, /\bfacebook\b/, /\bx\.com\b/,
-      /\bstock\s+price\b/, /\baddress\s+of\b/, /\blocation\s+of\b/,
-      /\bartist\b/, /\bsinger\b/, /\bactor\b/, /\bactress\b/, /\bcompany\b/
+    return false;
+  }
+
+  function isCategoryA(text) {
+    const lower = text.toLowerCase();
+
+    const alwaysSearchPatterns = [
+      // Time (including "time in <city>" phrasing)
+      /\bcurrent time\b/, /\bwhat time is it\b/, /\bwhat'?s the time\b/,
+      /\btime (right )?now\b/, /\btime in\b/, /\btime zone\b/,
+      // Date
+      /\bcurrent date\b/, /\btoday'?s date\b/,
+      /\bwhat('?s| is) (today|the date)\b/, /\bwhat day is it\b/,
+      // Weather
+      /\bweather\b/, /\bforecast\b/, /\btemperature\b/,
+      // Sports — results and major tournament names
+      /\bscore\b/, /\bwho won\b/, /\bfinal (score|result)\b/, /\bmatch result\b/,
+      /\bfixture(s)?\b/, /\bstandings\b/, /\bleague table\b/,
+      /\bfifa\b/, /\bworld cup\b/, /\bpremier league\b/, /\bchampions league\b/,
+      /\bballon d'?or\b/, /\buefa\b/, /\bworld series\b/, /\bnba finals\b/,
+      // News
+      /\bbreaking news\b/, /\blatest news\b/, /\bcurrent news\b/,
+      /\bnews (today|right now)\b/, /\brecent events\b/,
+      // Elections
+      /\belection\b/, /\bwho won the election\b/,
+      // Finance / crypto
+      /\bexchange rate\b/, /\bcurrency (rate|conversion)\b/, /\busd to\b/, /\beur to\b/,
+      /\bbitcoin\b/, /\bcrypto\b/, /\bethereum\b/, /\bcryptocurrency\b/,
+      /\bstock price\b/, /\bshare price\b/, /\bstock market\b/, /\bnasdaq\b/, /\bnyse\b/
     ];
-    for (let i = 0; i < searchIntentPatterns.length; i++) {
-      if (searchIntentPatterns[i].test(lower)) return true;
+
+    for (let i = 0; i < alwaysSearchPatterns.length; i++) {
+      if (alwaysSearchPatterns[i].test(lower)) return true;
+    }
+
+    return false;
+  }
+
+  function isCategoryB(text) {
+    const trimmed = text.trim();
+    const lower = trimmed.toLowerCase();
+
+    const usuallySearchPatterns = [
+      /\bartist\b/, /\bsinger\b/, /\bmusician\b/, /\brapper\b/, /\bband\b/,
+      /\bdj\b/, /\bproducer\b/, /\bcreator\b/, /\bcontent creator\b/, /\binfluencer\b/,
+      /\bactor\b/, /\bactress\b/, /\bcelebrity\b/, /\bpublic figure\b/,
+      /\bceo\b/, /\bfounder\b/, /\bcompany\b/, /\bwebsite\b/,
+      /\bspotify\b/, /\bapple music\b/, /\baudiomack\b/, /\byoutube music\b/,
+      /\btiktok\b/, /\binstagram\b/, /\bfacebook\b/, /\btwitter\b/, /\bx\.com\b/,
+      /\bnew (song|album|single|ep|mixtape)\b/, /\blatest (song|album|single)\b/,
+      /\bjust released\b/, /\brecently released\b/,
+      /\bwho\s+is\b/, /\bwho'?s\b/, /\bwho\s+are\b/,
+      /\btell\s+me\s+about\b/
+    ];
+
+    for (let i = 0; i < usuallySearchPatterns.length; i++) {
+      if (usuallySearchPatterns[i].test(lower)) return true;
     }
 
     // Social media handle mention, e.g. "@marleyfedexz"
@@ -2449,19 +2502,30 @@
         return;
       }
 
-      // Text messages: automatic + confidence-based web search.
-      // The Search toggle still works as a manual override that forces a
-      // search regardless of the automatic checks below.
-      const forcedSearch = webSearchEnabled || messageNeedsWebSearch(text);
+      // Text messages: three-tier classification decides how search is
+      // handled. The Search toggle still works as a manual override that
+      // forces a search regardless of the automatic checks below.
+      //
+      // A and B are checked FIRST and unconditionally — this is the fix:
+      // previously Category C (which includes a "short message, no
+      // question mark" rule) was checked first and could silently block
+      // short factual queries like "Lagos time" or "PSG score" from ever
+      // reaching the A/B checks or even the confidence fallback. Now C is
+      // only considered a hard "never search" classification when neither
+      // A nor B matched.
+      const categoryA = isCategoryA(text);
+      const categoryB = isCategoryB(text);
+      const isNeverSearch = !categoryA && !categoryB && isCategoryC(text);
+      const isForcedSearch = webSearchEnabled || categoryA || categoryB;
 
-      if (forcedSearch) {
+      if (isForcedSearch) {
         await runSearchAndRegenerate(text);
         return;
       }
 
-      // No obvious search trigger — answer normally first (full streaming,
-      // no added delay). Only if the AI's own answer reads as uncertain do
-      // we discard it and automatically search + regenerate.
+      // Category C (greetings, jokes, creative writing, translation, simple
+      // math) or anything unclassified — answer normally first (full
+      // streaming, no added delay).
       addThinkingBubble();
       const firstAttempt = await performChatRequest(buildMessagesForApi(), null);
 
@@ -2470,7 +2534,10 @@
         return;
       }
 
-      if (responseShowsUncertainty(firstAttempt.accumulated)) {
+      if (!isNeverSearch && responseShowsUncertainty(firstAttempt.accumulated)) {
+        // Only messages outside Category C get the confidence-based
+        // fallback — Category C never searches, even if the answer happens
+        // to sound unsure (e.g. a joke or creative text).
         // Discard the uncertain answer — it was never persisted, so just
         // remove its bubble from view — then search and regenerate.
         if (firstAttempt.aiBubble && firstAttempt.aiBubble.parentElement) {
@@ -2480,7 +2547,7 @@
         return;
       }
 
-      // Confident answer — keep it as-is.
+      // Confident answer, or Category C — keep it as-is.
       persistMessage(firstAttempt.accumulated, 'ai');
 
     } catch (err) {
