@@ -556,29 +556,6 @@
     flex-shrink: 0;
   }
 
-  #attach-btn {
-    flex-shrink: 0;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    border: none;
-    background: #2f2f2f;
-    color: #d4d4d4;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  #attach-btn:hover {
-    background: #3d3d3d;
-  }
-
-  #attach-btn svg {
-    width: 20px;
-    height: 20px;
-  }
-
   #mic-btn {
     flex-shrink: 0;
     width: 44px;
@@ -956,13 +933,9 @@
             </button>
           </div>
         </div>
-        <button id="attach-btn" type="button" aria-label="Attach image">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-          </svg>
-        </button>
         <input id="file-input" type="file" accept="image/*" style="display: none;">
         <input id="camera-input" type="file" accept="image/*" capture="environment" style="display: none;">
+        <input id="files-input" type="file" style="display: none;">
         <button id="mic-btn" type="button" aria-label="Voice input">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -1002,7 +975,6 @@
   const sidebar = document.getElementById('sidebar');
   const sidebarBackdrop = document.getElementById('sidebar-backdrop');
   const menuBtn = document.getElementById('menu-btn');
-  const attachBtn = document.getElementById('attach-btn');
   const plusBtn = document.getElementById('plus-btn');
   const attachmentMenu = document.getElementById('attachment-menu');
   const plusBtnWrapper = document.getElementById('plus-btn-wrapper');
@@ -1010,6 +982,7 @@
   const micBtn = document.getElementById('mic-btn');
   const fileInput = document.getElementById('file-input');
   const cameraInput = document.getElementById('camera-input');
+  const filesInput = document.getElementById('files-input');
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
   const removeImageBtn = document.getElementById('remove-image-btn');
@@ -2375,16 +2348,17 @@
         return;
       }
 
-      // Files / Plugins / Think harder — not wired yet, still just close
-      // the menu for now.
+      if (action === 'files') {
+        filesInput.click();
+        return;
+      }
+
+      // Plugins / Think harder — not wired yet, still just close the menu
+      // for now.
     });
   });
 
   // ---------- Image attach ----------
-
-  attachBtn.addEventListener('click', function() {
-    fileInput.click();
-  });
 
   // Shared by both the gallery picker (fileInput) and the camera capture
   // input (cameraInput) — same compress/preview logic either way, no
@@ -2412,6 +2386,23 @@
     const file = cameraInput.files && cameraInput.files[0];
     handleImageFile(file);
     cameraInput.value = '';
+  });
+
+  filesInput.addEventListener('change', function() {
+    const file = filesInput.files && filesInput.files[0];
+    filesInput.value = '';
+    if (!file) return;
+
+    if (file.type && file.type.indexOf('image/') === 0) {
+      // An image was picked from the general file picker — reuse the exact
+      // same working pipeline as Photos/Camera, no duplicate logic.
+      handleImageFile(file);
+      return;
+    }
+
+    // Non-image documents (PDF, docx, txt, etc.) aren't processed by
+    // TenAI yet — say so plainly rather than silently doing nothing.
+    addMessage("I can only work with images right now — support for documents and other file types is coming soon.", 'ai');
   });
 
   // ---------- Voice input ----------
