@@ -1992,6 +1992,94 @@
     return false;
   }
 
+  // ---------- Real-time date/time (IANA timezones, not search or AI knowledge) ----------
+  // Date/time questions for a recognized city/country are answered using
+  // the browser's actual clock via Intl's IANA timezone database — this is
+  // always accurate, unlike a search result (which can be stale/cached) or
+  // the AI's own training knowledge (always stale). Takes priority over the
+  // normal search flow, but only for questions it can confidently resolve;
+  // anything it doesn't recognize falls through to the existing search
+  // system unchanged.
+
+  const CITY_TIMEZONES = {
+    'lagos': 'Africa/Lagos', 'nigeria': 'Africa/Lagos', 'abuja': 'Africa/Lagos',
+    'london': 'Europe/London', 'uk': 'Europe/London', 'england': 'Europe/London',
+    'united kingdom': 'Europe/London', 'britain': 'Europe/London',
+    'new york': 'America/New_York', 'nyc': 'America/New_York',
+    'los angeles': 'America/Los_Angeles', 'la': 'America/Los_Angeles', 'california': 'America/Los_Angeles',
+    'chicago': 'America/Chicago',
+    'tokyo': 'Asia/Tokyo', 'japan': 'Asia/Tokyo',
+    'paris': 'Europe/Paris', 'france': 'Europe/Paris',
+    'berlin': 'Europe/Berlin', 'germany': 'Europe/Berlin',
+    'madrid': 'Europe/Madrid', 'spain': 'Europe/Madrid',
+    'rome': 'Europe/Rome', 'italy': 'Europe/Rome',
+    'moscow': 'Europe/Moscow', 'russia': 'Europe/Moscow',
+    'dubai': 'Asia/Dubai', 'uae': 'Asia/Dubai',
+    'delhi': 'Asia/Kolkata', 'mumbai': 'Asia/Kolkata', 'india': 'Asia/Kolkata',
+    'beijing': 'Asia/Shanghai', 'shanghai': 'Asia/Shanghai', 'china': 'Asia/Shanghai',
+    'hong kong': 'Asia/Hong_Kong',
+    'singapore': 'Asia/Singapore',
+    'seoul': 'Asia/Seoul', 'south korea': 'Asia/Seoul',
+    'sydney': 'Australia/Sydney', 'australia': 'Australia/Sydney',
+    'toronto': 'America/Toronto', 'canada': 'America/Toronto',
+    'accra': 'Africa/Accra', 'ghana': 'Africa/Accra',
+    'nairobi': 'Africa/Nairobi', 'kenya': 'Africa/Nairobi',
+    'johannesburg': 'Africa/Johannesburg', 'south africa': 'Africa/Johannesburg',
+    'cairo': 'Africa/Cairo', 'egypt': 'Africa/Cairo',
+    'sao paulo': 'America/Sao_Paulo', 'brazil': 'America/Sao_Paulo',
+    'mexico city': 'America/Mexico_City', 'mexico': 'America/Mexico_City',
+    'istanbul': 'Europe/Istanbul', 'turkey': 'Europe/Istanbul',
+    'amsterdam': 'Europe/Amsterdam', 'netherlands': 'Europe/Amsterdam'
+  };
+
+  function isDateTimeQuestion(text) {
+    const lower = text.toLowerCase();
+    return /\bcurrent time\b/.test(lower) ||
+      /\bwhat time is it\b/.test(lower) ||
+      /\bwhat'?s the time\b/.test(lower) ||
+      /\btime (right )?now\b/.test(lower) ||
+      /\btime in\b/.test(lower) ||
+      /\bcurrent date\b/.test(lower) ||
+      /\btoday'?s date\b/.test(lower) ||
+      /\bwhat('?s| is) (today|the date)\b/.test(lower) ||
+      /\bwhat day is it\b/.test(lower);
+  }
+
+  function extractTimeZoneFromText(text) {
+    const lower = text.toLowerCase();
+
+    // Check longer/more specific place names first so "new york" matches
+    // before a shorter partial key could interfere.
+    const keys = Object.keys(CITY_TIMEZONES).sort(function (a, b) {
+      return b.length - a.length;
+    });
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const pattern = new RegExp('\\b' + key.replace(/\s+/g, '\\s+') + '\\b');
+      if (pattern.test(lower)) {
+        return { place: key, zone: CITY_TIMEZONES[key] };
+      }
+    }
+
+    return null;
+  }
+
+  function getFormattedDateTime(ianaZone) {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: ianaZone,
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short'
+    });
+    return formatter.format(now);
+  }
+
   function isCategoryA(text) {
     const lower = text.toLowerCase();
 
@@ -2500,6 +2588,38 @@
           addMessage('Error: could not reach TenAI. Please try again.', 'ai');
         }
         return;
+      }
+
+      // Real-time date/time takes priority over everything below — it's
+      // answered from the actual clock via IANA timezones, not search or
+      // AI knowledge, so there's no reason to search or guess when we can
+      // just compute the exact right answer. Only intercepts when a known
+      // city/country is recognized; anything else falls through unchanged
+      // to the existing search-based logic.
+      if (isDateTimeQuestion(text)) {
+        const tzMatch = extractTimeZoneFromText(text);
+        if (tzMatch) {
+          const formatted = getFormattedDateTime(tzMatch.zone);
+          const authoritativeContext =
+            'Authoritative real-time data (use this exact information, do not say you lack real-time access): ' +
+            'The current date and time in ' + tzMatch.place + ' (' + tzMatch.zone + ') is ' + formatted + '.\n\n' +
+            'User\'s question: ' + text;
+
+          const baseMessages = buildMessagesForApi();
+          const messagesForApi = baseMessages.slice(0, baseMessages.length - 1).concat([
+            { role: 'user', content: authoritativeContext }
+          ]);
+
+          addThinkingBubble();
+          const tzResult = await performChatRequest(messagesForApi, null);
+
+          if (tzResult.ok) {
+            persistMessage(tzResult.accumulated, 'ai');
+          } else {
+            addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+          }
+          return;
+        }
       }
 
       // Text messages: three-tier classification decides how search is
