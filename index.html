@@ -962,6 +962,7 @@
           </svg>
         </button>
         <input id="file-input" type="file" accept="image/*" style="display: none;">
+        <input id="camera-input" type="file" accept="image/*" capture="environment" style="display: none;">
         <button id="mic-btn" type="button" aria-label="Voice input">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -1008,6 +1009,7 @@
   const searchToggleBtn = document.getElementById('search-toggle-btn');
   const micBtn = document.getElementById('mic-btn');
   const fileInput = document.getElementById('file-input');
+  const cameraInput = document.getElementById('camera-input');
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
   const removeImageBtn = document.getElementById('remove-image-btn');
@@ -2349,20 +2351,34 @@
   });
 
   document.querySelectorAll('.attachment-menu-item').forEach(function(item) {
-  item.addEventListener('click', function(e) {
-    e.stopPropagation();
-    closeAttachmentMenu();
+    item.addEventListener('click', function(e) {
+      e.stopPropagation();
+      closeAttachmentMenu();
 
-    const action = item.getAttribute('data-action');
+      const action = item.getAttribute('data-action');
 
-    if (action === 'photos') {
-      fileInput.click();
-      return;
-    }
+      if (action === 'photos') {
+        // Reuses the exact same hidden file input (and its existing
+        // 'change' handler further down, which already does
+        // compressImage + preview + upload) that the paperclip button
+        // has always used — no duplicate upload system.
+        fileInput.click();
+        return;
+      }
 
-    // Camera / Files / Plugins / Think harder — not wired yet.
+      if (action === 'camera') {
+        // Separate hidden input with capture="environment", which is what
+        // makes mobile browsers open the camera directly instead of the
+        // gallery. Shares the same handleImageFile()/compressImage upload
+        // logic as Photos — no duplicate upload system.
+        cameraInput.click();
+        return;
+      }
+
+      // Files / Plugins / Think harder — not wired yet, still just close
+      // the menu for now.
+    });
   });
-});
 
   // ---------- Image attach ----------
 
@@ -2370,8 +2386,10 @@
     fileInput.click();
   });
 
-  fileInput.addEventListener('change', function() {
-    const file = fileInput.files && fileInput.files[0];
+  // Shared by both the gallery picker (fileInput) and the camera capture
+  // input (cameraInput) — same compress/preview logic either way, no
+  // duplicate upload system.
+  function handleImageFile(file) {
     if (!file) return;
 
     compressImage(file).then(function(dataUrl) {
@@ -2382,8 +2400,18 @@
     }).catch(function(err) {
       console.error('Image processing failed:', err);
     });
+  }
 
+  fileInput.addEventListener('change', function() {
+    const file = fileInput.files && fileInput.files[0];
+    handleImageFile(file);
     fileInput.value = '';
+  });
+
+  cameraInput.addEventListener('change', function() {
+    const file = cameraInput.files && cameraInput.files[0];
+    handleImageFile(file);
+    cameraInput.value = '';
   });
 
   // ---------- Voice input ----------
