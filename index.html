@@ -484,6 +484,7 @@
   }
 
   #plus-btn {
+    position: relative;
     width: 44px;
     height: 44px;
     border-radius: 50%;
@@ -549,11 +550,32 @@
     background: #3d3d3d;
   }
 
+  .attachment-menu-item.active {
+    background: rgba(47, 111, 237, 0.15);
+    color: #6ea8ff;
+  }
+
+  .attachment-menu-item.active svg {
+    color: #6ea8ff;
+  }
+
   .attachment-menu-item svg {
     width: 18px;
     height: 18px;
     color: #9b9b9b;
     flex-shrink: 0;
+  }
+
+  #plus-btn.armed::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #2f6fed;
+    border: 2px solid #212121;
   }
 
   #mic-btn {
@@ -1002,6 +1024,20 @@
     webSearchEnabled = localStorage.getItem(WEB_SEARCH_KEY) === 'true';
   } catch (err) {
     webSearchEnabled = false;
+  }
+
+  // One-shot: armed by selecting "Think harder" in the + menu, applies to
+  // the very next message sent, then automatically turns itself back off.
+  // Not persisted to localStorage on purpose — it shouldn't silently stay
+  // on across page reloads and quietly burn extra tokens.
+  let thinkHarderEnabled = false;
+
+  // Same one-shot behavior as Think Harder — armed for the next message
+  // only, not persisted.
+  let pluginsEnabled = false;
+
+  function updatePlusBtnArmedState() {
+    plusBtn.classList.toggle('armed', thinkHarderEnabled || pluginsEnabled);
   }
 
   const ACTIVE_ID_KEY = 'tenai_active_id';
@@ -2353,15 +2389,19 @@
         return;
       }
 
-      if (action === 'plugins') {
-  try {
-    localStorage.setItem('tenai_plugin_calculator', 'true');
-  } catch (err) {
-    console.error('Could not enable calculator plugin:', err);
-  }
+      if (action === 'think-harder') {
+        thinkHarderEnabled = !thinkHarderEnabled;
+        item.classList.toggle('active', thinkHarderEnabled);
+        updatePlusBtnArmedState();
+        return;
+      }
 
-  return;
-}
+      if (action === 'plugins') {
+        pluginsEnabled = !pluginsEnabled;
+        item.classList.toggle('active', pluginsEnabled);
+        updatePlusBtnArmedState();
+        return;
+      }
     });
   });
 
@@ -2628,7 +2668,7 @@
   // Does NOT persist to storage — the caller decides whether to keep this
   // answer (persist it) or discard it (e.g. because it was uncertain and
   // is about to be regenerated with search results).
-  async function performChatRequest(messagesForApi, sourcesForReply) {
+  async function performChatRequest(messagesForApi, sourcesForReply, thinkHarder, plugins) {
     let aiBubble = null;
     let accumulated = '';
     let ok = true;
@@ -2639,7 +2679,7 @@
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: '', messages: messagesForApi })
+        body: JSON.stringify({ message: '', messages: messagesForApi, thinkHarder: !!thinkHarder, plugins: !!plugins })
       });
 
       if (!response.ok || !response.body) {
@@ -2710,7 +2750,7 @@
     return { accumulated: accumulated, aiBubble: aiBubble, ok: ok };
   }
 
-  async function runSearchAndRegenerate(text) {
+  async function runSearchAndRegenerate(text, thinkHarder, plugins) {
     addSearchingBubble();
     const searchResults = await searchWeb(text);
     removeSearchingBubble();
@@ -2724,7 +2764,7 @@
     }
 
     addThinkingBubble();
-    const result = await performChatRequest(messagesForApi, searchResults);
+    const result = await performChatRequest(messagesForApi, searchResults, thinkHarder, plugins);
 
     if (result.ok) {
       persistMessage(result.accumulated, 'ai', null, searchResults);
@@ -2753,6 +2793,22 @@
     isWaiting = true;
     sendBtn.disabled = true;
     updateSendBtnState();
+
+    // Think Harder and Plugins are both one-shot: capture whatever they're
+    // set to for this specific message, then immediately arm them back off
+    // (and clear the visual indicators) so neither silently stays on for
+    // later messages.
+    const thinkHarderForThisMessage = thinkHarderEnabled;
+    const pluginsForThisMessage = pluginsEnabled;
+
+    if (thinkHarderEnabled || pluginsEnabled) {
+      thinkHarderEnabled = false;
+      pluginsEnabled = false;
+      updatePlusBtnArmedState();
+      document.querySelectorAll('.attachment-menu-item[data-action="think-harder"], .attachment-menu-item[data-action="plugins"]').forEach(function(el) {
+        el.classList.remove('active');
+      });
+    }
 
     try {
       // Image messages: unchanged non-streaming path, no search/confidence
@@ -2843,7 +2899,7 @@
       const isForcedSearch = webSearchEnabled || categoryA || categoryB;
 
       if (isForcedSearch) {
-        await runSearchAndRegenerate(text);
+        await runSearchAndRegenerate(text, thinkHarderForThisMessage, pluginsForThisMessage);
         return;
       }
 
@@ -2851,7 +2907,7 @@
       // math) or anything unclassified — answer normally first (full
       // streaming, no added delay).
       addThinkingBubble();
-      const firstAttempt = await performChatRequest(buildMessagesForApi(), null);
+      const firstAttempt = await performChatRequest(buildMessagesForApi(), null, thinkHarderForThisMessage, pluginsForThisMessage);
 
       if (!firstAttempt.ok) {
         addMessage('Error: could not reach TenAI. Please try again.', 'ai');
@@ -2867,7 +2923,7 @@
         if (firstAttempt.aiBubble && firstAttempt.aiBubble.parentElement) {
           firstAttempt.aiBubble.parentElement.remove();
         }
-        await runSearchAndRegenerate(text);
+        await runSearchAndRegenerate(text, thinkHarderForThisMessage, pluginsForThisMessage);
         return;
       }
 
