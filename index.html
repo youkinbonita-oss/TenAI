@@ -2353,8 +2353,15 @@
         return;
       }
 
-      // Plugins / Think harder — not wired yet, still just close the menu
-      // for now.
+      if (action === 'plugins') {
+  try {
+    localStorage.setItem('tenai_plugin_calculator', 'true');
+  } catch (err) {
+    console.error('Could not enable calculator plugin:', err);
+  }
+
+  return;
+}
     });
   });
 
