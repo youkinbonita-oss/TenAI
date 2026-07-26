@@ -2349,14 +2349,20 @@
   });
 
   document.querySelectorAll('.attachment-menu-item').forEach(function(item) {
-    item.addEventListener('click', function(e) {
-      e.stopPropagation();
-      // No functionality wired yet — this is UI/menu scaffolding only, per
-      // the current step. Each item's data-action will be hooked up to
-      // real behavior (camera capture, file picker, plugins, etc.) later.
-      closeAttachmentMenu();
-    });
+  item.addEventListener('click', function(e) {
+    e.stopPropagation();
+    closeAttachmentMenu();
+
+    const action = item.getAttribute('data-action');
+
+    if (action === 'photos') {
+      fileInput.click();
+      return;
+    }
+
+    // Camera / Files / Plugins / Think harder — not wired yet.
   });
+});
 
   // ---------- Image attach ----------
 
