@@ -5,10 +5,13 @@ export const config = {
     }
   }
 };
+
 const FREE_MODELS = [
   "openrouter/free",
   "openai/gpt-oss-120b:free",
-  "nvidia/nemotron-3-super-120b-a12b:free"
+  "qwen/qwen3-coder:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemma-4-26b-a4b-it:free"
 ];
 
 const VISION_MODELS = [
@@ -64,9 +67,6 @@ export default async function handler(req, res) {
 
     const modelList = hasImage ? VISION_MODELS : FREE_MODELS;
 
-    // Many free vision providers on OpenRouter silently drop image data when
-    // stream:true is combined with image_url content. Image requests are sent
-    // non-streaming to guarantee the image actually reaches the model.
     if (hasImage) {
       let data = null;
       let lastError = null;
