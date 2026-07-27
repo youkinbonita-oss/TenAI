@@ -2449,7 +2449,36 @@
 
     // Non-image documents (PDF, docx, txt, etc.) aren't processed by
     // TenAI yet — say so plainly rather than silently doing nothing.
-    addMessage("I can only work with images right now — support for documents and other file types is coming soon.", 'ai');
+    
+            if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
+  const reader = new FileReader();
+
+  reader.onload = function() {
+    const fileText = String(reader.result || '').trim();
+
+    if (!fileText) {
+      addMessage('The text file is empty.', 'ai');
+      return;
+    }
+
+    input.value = 'Please analyze this text file:\n\n' + fileText;
+    autoResize();
+    updateSendBtnState();
+    input.focus();
+  };
+
+  reader.onerror = function() {
+    addMessage('I could not read that text file. Please try again.', 'ai');
+  };
+
+  reader.readAsText(file);
+  return;
+}
+
+addMessage(
+  'I can read TXT files right now. PDF and DOCX support will be added next.',
+  'ai'
+);   
   });
 
   // ---------- Voice input ----------
