@@ -2447,38 +2447,40 @@
       return;
     }
 
-    // Non-image documents (PDF, docx, txt, etc.) aren't processed by
-    // TenAI yet — say so plainly rather than silently doing nothing.
-    
-            if (file.name.toLowerCase().endsWith('.txt')) {
-  const reader = new FileReader();
+    const isTxt = file.type === 'text/plain' || /\.txt$/i.test(file.name);
 
-  reader.onload = function() {
-    const fileText = String(reader.result || '').trim();
+    if (isTxt) {
+      const MAX_TXT_CHARS = 50000;
+      const reader = new FileReader();
 
-    if (!fileText) {
-      addMessage('The text file is empty.', 'ai');
+      reader.onload = function() {
+        let content = String(reader.result);
+        let truncatedNotice = '';
+
+        if (content.length > MAX_TXT_CHARS) {
+          content = content.slice(0, MAX_TXT_CHARS);
+          truncatedNotice = '\n\n[File truncated — showing first ' + MAX_TXT_CHARS + ' characters]';
+        }
+
+        const separator = input.value.trim().length > 0 ? '\n\n' : '';
+        input.value = input.value + separator + content + truncatedNotice;
+        autoResize();
+        updateSendBtnState();
+        input.focus();
+      };
+
+      reader.onerror = function() {
+        addMessage("I couldn't read that text file. Please try again.", 'ai');
+      };
+
+      reader.readAsText(file);
       return;
     }
 
-    input.value = 'Please analyze this text file:\n\n' + fileText;
-    autoResize();
-    updateSendBtnState();
-    input.focus();
-  };
-
-  reader.onerror = function() {
-    addMessage('I could not read that text file. Please try again.', 'ai');
-  };
-
-  reader.readAsText(file);
-  return;
-}
-
-addMessage(
-  'I can read TXT files right now. PDF and DOCX support will be added next.',
-  'ai'
-);   
+    // PDF, DOCX, and other non-text documents aren't processed by TenAI
+    // yet — say so plainly rather than silently doing nothing. (Next step:
+    // PDF and DOCX support.)
+    addMessage("I can only read plain text (.txt) files and images right now — PDF and Word document support is coming soon.", 'ai');
   });
 
   // ---------- Voice input ----------
