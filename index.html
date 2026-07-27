@@ -2450,7 +2450,33 @@
 
   const MAX_EXTRACTED_CHARS = 50000;
 
-  function insertExtractedText(content) {
+  function insertExtractedText(content, fileName = 'Document') {
+  let text = content;
+  let truncatedNotice = '';
+
+  if (text.length > MAX_EXTRACTED_CHARS) {
+    text = text.slice(0, MAX_EXTRACTED_CHARS);
+    truncatedNotice =
+      '\n\n[File truncated — showing first ' +
+      MAX_EXTRACTED_CHARS +
+      ' characters]';
+  }
+
+  const separator = input.value.trim().length > 0 ? '\n\n' : '';
+
+  input.value =
+    input.value +
+    separator +
+    '📄 ' +
+    fileName +
+    '\n\n' +
+    text +
+    truncatedNotice;
+
+  autoResize();
+  updateSendBtnState();
+  input.focus();
+}
     let text = content;
     let truncatedNotice = '';
 
