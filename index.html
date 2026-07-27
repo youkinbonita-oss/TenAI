@@ -840,8 +840,8 @@
     }
   }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js" defer></script>
 </head>
 <body>
 
@@ -991,17 +991,6 @@
 </div>
 
 <script>
-  // pdf.js requires its worker script configured before use. Guarded in
-  // case the CDN failed to load — PDF reading would then fail gracefully
-  // via the try/catch in extractPdfText rather than throwing here.
-  (function() {
-    const pdfLib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
-    if (pdfLib && pdfLib.GlobalWorkerOptions) {
-      pdfLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js';
-    }
-  })();
-
   const chatWindow = document.getElementById('chat-window');
   const input = document.getElementById('message-input');
   const sendBtn = document.getElementById('send-btn');
@@ -2450,33 +2439,7 @@
 
   const MAX_EXTRACTED_CHARS = 50000;
 
-  function insertExtractedText(content, fileName = 'Document') {
-  let text = content;
-  let truncatedNotice = '';
-
-  if (text.length > MAX_EXTRACTED_CHARS) {
-    text = text.slice(0, MAX_EXTRACTED_CHARS);
-    truncatedNotice =
-      '\n\n[File truncated — showing first ' +
-      MAX_EXTRACTED_CHARS +
-      ' characters]';
-  }
-
-  const separator = input.value.trim().length > 0 ? '\n\n' : '';
-
-  input.value =
-    input.value +
-    separator +
-    '📄 ' +
-    fileName +
-    '\n\n' +
-    text +
-    truncatedNotice;
-
-  autoResize();
-  updateSendBtnState();
-  input.focus();
-}
+  function insertExtractedText(content) {
     let text = content;
     let truncatedNotice = '';
 
@@ -2495,6 +2458,13 @@
   function extractPdfText(file) {
     const pdfLib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
     if (!pdfLib) return Promise.reject(new Error('PDF library not loaded'));
+
+    // Configured here (once needed) rather than at page load, since the
+    // library loads with `defer` and may not be ready yet at script start.
+    if (pdfLib.GlobalWorkerOptions && !pdfLib.GlobalWorkerOptions.workerSrc) {
+      pdfLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js';
+    }
 
     return file.arrayBuffer().then(function(buffer) {
       return pdfLib.getDocument({ data: buffer }).promise.then(function(pdf) {
