@@ -6,6 +6,9 @@ export const config = {
   }
 };
 
+import pdfParse from "pdf-parse";
+import mammoth from "mammoth";
+
 const FREE_MODELS = [
   "openrouter/free",
   "openai/gpt-oss-120b:free",
