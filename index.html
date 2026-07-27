@@ -2450,7 +2450,7 @@
     // Non-image documents (PDF, docx, txt, etc.) aren't processed by
     // TenAI yet — say so plainly rather than silently doing nothing.
     
-            if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) {
+            if (file.name.toLowerCase().endsWith('.txt')) {
   const reader = new FileReader();
 
   reader.onload = function() {
