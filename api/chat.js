@@ -267,7 +267,14 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, messages, image, thinkHarder, plugins } = req.body || {};
+    const {
+  message,
+  messages,
+  image,
+  file,
+  thinkHarder,
+  plugins
+} = req.body || {};
 
     let finalMessages = Array.isArray(messages) ? messages : [];
 
