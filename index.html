@@ -337,6 +337,135 @@
     background: #555;
   }
 
+  #file-preview-bar {
+    display: none;
+    align-items: center;
+    padding: 0 4px;
+  }
+
+  #file-preview-bar.visible {
+    display: flex;
+  }
+
+  #file-preview-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #2f2f2f;
+    border: 1px solid #3d3d3d;
+    border-radius: 12px;
+    padding: 8px 34px 8px 10px;
+    max-width: 100%;
+  }
+
+  #file-preview-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6ea8ff;
+  }
+
+  #file-preview-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  #file-preview-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-width: 220px;
+  }
+
+  #file-preview-name {
+    font-size: 13px;
+    color: #ececec;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #file-preview-size {
+    font-size: 11px;
+    color: #9b9b9b;
+  }
+
+  #remove-file-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #3d3d3d;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  #remove-file-btn:hover {
+    background: #555;
+  }
+
+  .bubble-file-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 12px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    max-width: 100%;
+  }
+
+  .bubble-file-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+  }
+
+  .bubble-file-icon svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .bubble-file-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .bubble-file-name {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+
+  .bubble-file-meta {
+    font-size: 11px;
+    opacity: 0.75;
+  }
+
   #voice-review-bar {
     display: none;
     align-items: center;
@@ -880,6 +1009,21 @@
           <button id="remove-image-btn" type="button" aria-label="Remove image">✕</button>
         </div>
       </div>
+      <div id="file-preview-bar">
+        <div id="file-preview-card">
+          <div id="file-preview-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+          </div>
+          <div id="file-preview-info">
+            <span id="file-preview-name"></span>
+            <span id="file-preview-size"></span>
+          </div>
+          <button id="remove-file-btn" type="button" aria-label="Remove file">✕</button>
+        </div>
+      </div>
       <div id="voice-review-bar">
         <button id="voice-cancel-btn" class="voice-review-action-btn" type="button" aria-label="Cancel transcription">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1010,6 +1154,10 @@
   const imagePreviewBar = document.getElementById('image-preview-bar');
   const imagePreviewImg = document.getElementById('image-preview-img');
   const removeImageBtn = document.getElementById('remove-image-btn');
+  const filePreviewBar = document.getElementById('file-preview-bar');
+  const filePreviewName = document.getElementById('file-preview-name');
+  const filePreviewSize = document.getElementById('file-preview-size');
+  const removeFileBtn = document.getElementById('remove-file-btn');
   const voiceReviewBar = document.getElementById('voice-review-bar');
   const voiceCancelBtn = document.getElementById('voice-cancel-btn');
   const voiceConfirmBtn = document.getElementById('voice-confirm-btn');
@@ -1019,6 +1167,7 @@
   const lightboxClose = document.getElementById('lightbox-close');
 
   let pendingImage = null; // base64 data URL of image staged for the next message
+  let pendingFile = null; // { name, typeLabel, sizeLabel, content } staged for the next message
 
   const WEB_SEARCH_KEY = 'tenai_web_search_enabled';
   let webSearchEnabled = false;
@@ -1200,19 +1349,21 @@
     return conversationsCache[activeId] || null;
   }
 
-  function persistMessage(text, sender, image, sources) {
+  function persistMessage(text, sender, image, sources, fileCard, fileContent) {
     const conv = conversationsCache[activeId];
     if (!conv) return;
 
     const entry = { text: text, sender: sender };
     if (image) entry.image = image;
     if (sources && sources.length > 0) entry.sources = sources;
+    if (fileCard) entry.fileCard = fileCard;
+    if (fileContent) entry.fileContent = fileContent;
 
     conv.messages.push(entry);
     conv.updatedAt = Date.now();
 
     if (conv.title === 'New Chat' && sender === 'user') {
-      const titleSource = text && text.length > 0 ? text : 'Image';
+      const titleSource = text && text.length > 0 ? text : (fileCard ? fileCard.name : 'Image');
       conv.title = titleSource.length > 30 ? titleSource.slice(0, 30) + '...' : titleSource;
     }
 
@@ -1231,16 +1382,23 @@
       .map(function(msg) {
         const role = msg.sender === 'ai' ? 'assistant' : 'user';
 
+        // File attachments are shown as a compact card, but the AI still
+        // needs the actual extracted text — folded into the outgoing
+        // content here, never into the displayed bubble text itself.
+        const textForApi = msg.fileContent
+          ? (msg.fileContent + (msg.text ? '\n\n' + msg.text : ''))
+          : msg.text;
+
         if (msg.image) {
           const parts = [];
-          if (msg.text) {
-            parts.push({ type: 'text', text: msg.text });
+          if (textForApi) {
+            parts.push({ type: 'text', text: textForApi });
           }
           parts.push({ type: 'image_url', image_url: { url: msg.image } });
           return { role: role, content: parts };
         }
 
-        return { role: role, content: msg.text };
+        return { role: role, content: textForApi };
       });
   }
 
@@ -1639,7 +1797,7 @@
     chatWindow.scrollTop = chatWindow.scrollHeight;
   }
 
-  function createBubble(text, sender, image, sources) {
+  function createBubble(text, sender, image, sources, fileCard) {
     const row = document.createElement('div');
     row.className = 'message-row ' + sender;
 
@@ -1655,6 +1813,36 @@
         openLightbox(image);
       });
       bubble.appendChild(img);
+    }
+
+    if (fileCard) {
+      const card = document.createElement('div');
+      card.className = 'bubble-file-card';
+
+      const icon = document.createElement('div');
+      icon.className = 'bubble-file-icon';
+      icon.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>' +
+        '<polyline points="14 2 14 8 20 8"></polyline>' +
+        '</svg>';
+      card.appendChild(icon);
+
+      const info = document.createElement('div');
+      info.className = 'bubble-file-info';
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'bubble-file-name';
+      nameEl.textContent = fileCard.name;
+      info.appendChild(nameEl);
+
+      const metaEl = document.createElement('span');
+      metaEl.className = 'bubble-file-meta';
+      metaEl.textContent = fileCard.typeLabel + ' · ' + fileCard.sizeLabel;
+      info.appendChild(metaEl);
+
+      card.appendChild(info);
+      bubble.appendChild(card);
     }
 
     if (text) {
@@ -1680,13 +1868,13 @@
     return { row: row, bubble: bubble };
   }
 
-  function addMessage(text, sender, skipPersist, image, sources) {
-    const { row, bubble } = createBubble(text, sender, image, sources);
+  function addMessage(text, sender, skipPersist, image, sources, fileCard, fileContent) {
+    const { row, bubble } = createBubble(text, sender, image, sources, fileCard);
     chatWindow.appendChild(row);
     scrollToBottom();
 
     if (!skipPersist) {
-      persistMessage(text, sender, image, sources);
+      persistMessage(text, sender, image, sources, fileCard, fileContent);
     }
 
     return bubble;
@@ -1695,7 +1883,7 @@
   function renderChatWindow(messages) {
     chatWindow.innerHTML = '';
     messages.forEach(function(msg) {
-      const { row } = createBubble(msg.text, msg.sender, msg.image, msg.sources);
+      const { row } = createBubble(msg.text, msg.sender, msg.image, msg.sources, msg.fileCard);
       chatWindow.appendChild(row);
     });
     scrollToBottom();
@@ -1849,7 +2037,7 @@
   }
 
   function updateSendBtnState() {
-    if ((input.value.trim().length > 0 || pendingImage) && !isWaiting) {
+    if ((input.value.trim().length > 0 || pendingImage || pendingFile) && !isWaiting) {
       sendBtn.classList.add('active');
     } else {
       sendBtn.classList.remove('active');
@@ -2439,21 +2627,44 @@
 
   const MAX_EXTRACTED_CHARS = 50000;
 
-  function insertExtractedText(content) {
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // Replaces the old insertExtractedText(), which dumped raw file content
+  // straight into the editable message box. Files are now staged as a
+  // removable attachment card (same pattern as pendingImage) — the
+  // extracted text still gets sent to the AI exactly as before, but it's
+  // no longer shown as a giant wall of text the user has to scroll past.
+  function stageFileAttachment(file, content, typeLabel) {
     let text = content;
-    let truncatedNotice = '';
+    let truncated = false;
 
     if (text.length > MAX_EXTRACTED_CHARS) {
       text = text.slice(0, MAX_EXTRACTED_CHARS);
-      truncatedNotice = '\n\n[File truncated — showing first ' + MAX_EXTRACTED_CHARS + ' characters]';
+      truncated = true;
     }
 
-    const separator = input.value.trim().length > 0 ? '\n\n' : '';
-    input.value = input.value + separator + text + truncatedNotice;
-    autoResize();
+    pendingFile = {
+      name: file.name,
+      typeLabel: typeLabel,
+      sizeLabel: formatFileSize(file.size) + (truncated ? ' · truncated' : ''),
+      content: text
+    };
+
+    filePreviewName.textContent = pendingFile.name;
+    filePreviewSize.textContent = pendingFile.typeLabel + ' · ' + pendingFile.sizeLabel;
+    filePreviewBar.classList.add('visible');
     updateSendBtnState();
-    input.focus();
   }
+
+  removeFileBtn.addEventListener('click', function() {
+    pendingFile = null;
+    filePreviewBar.classList.remove('visible');
+    updateSendBtnState();
+  });
 
   function extractPdfText(file) {
     const pdfLib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
@@ -2518,7 +2729,7 @@
       const reader = new FileReader();
 
       reader.onload = function() {
-        insertExtractedText(String(reader.result));
+        stageFileAttachment(file, String(reader.result), 'TXT');
       };
 
       reader.onerror = function() {
@@ -2535,7 +2746,7 @@
           addMessage("I couldn't find any readable text in that PDF — it may be a scanned image rather than real text.", 'ai');
           return;
         }
-        insertExtractedText(text);
+        stageFileAttachment(file, text, 'PDF');
       }).catch(function(err) {
         console.error('PDF extraction failed:', err);
         addMessage("I couldn't read that PDF file. Please try again.", 'ai');
@@ -2549,7 +2760,7 @@
           addMessage("I couldn't find any readable text in that document.", 'ai');
           return;
         }
-        insertExtractedText(text);
+        stageFileAttachment(file, text, 'DOCX');
       }).catch(function(err) {
         console.error('DOCX extraction failed:', err);
         addMessage("I couldn't read that Word document. Please try again.", 'ai');
@@ -2885,19 +3096,29 @@
   async function sendMessage() {
     const text = input.value.trim();
     const imageToSend = pendingImage;
+    const fileToSend = pendingFile;
 
-    if (!text && !imageToSend) return;
+    if (!text && !imageToSend && !fileToSend) return;
     if (isWaiting) return;
 
     stopSpeaking();
     hideVoiceReviewBar();
-    addMessage(text, 'user', false, imageToSend);
+
+    const fileCardToSend = fileToSend
+      ? { name: fileToSend.name, typeLabel: fileToSend.typeLabel, sizeLabel: fileToSend.sizeLabel }
+      : null;
+    const fileContentToSend = fileToSend ? fileToSend.content : null;
+
+    addMessage(text, 'user', false, imageToSend, null, fileCardToSend, fileContentToSend);
     input.value = '';
     autoResize();
 
     pendingImage = null;
     imagePreviewImg.src = '';
     imagePreviewBar.classList.remove('visible');
+
+    pendingFile = null;
+    filePreviewBar.classList.remove('visible');
 
     isWaiting = true;
     sendBtn.disabled = true;
