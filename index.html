@@ -971,8 +971,6 @@
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
 </head>
 <body>
 
@@ -1105,7 +1103,7 @@
         </div>
         <input id="file-input" type="file" accept="image/*" style="display: none;">
         <input id="camera-input" type="file" accept="image/*" capture="environment" style="display: none;">
-        <input id="files-input" type="file" accept=".txt,.pdf,.docx,.csv,.xlsx,.pptx,image/*" style="display: none;">
+        <input id="files-input" type="file" accept=".txt,.pdf,.docx,image/*" style="display: none;">
         <button id="mic-btn" type="button" aria-label="Voice input">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
@@ -2710,55 +2708,6 @@
     });
   }
 
-  function extractXlsxText(file) {
-    if (typeof XLSX === 'undefined') return Promise.reject(new Error('XLSX library not loaded'));
-
-    return file.arrayBuffer().then(function(buffer) {
-      const workbook = XLSX.read(buffer, { type: 'array' });
-
-      const sheetTexts = workbook.SheetNames.map(function(sheetName) {
-        const sheet = workbook.Sheets[sheetName];
-        const csv = XLSX.utils.sheet_to_csv(sheet);
-        return 'Sheet: ' + sheetName + '\n' + csv;
-      });
-
-      return sheetTexts.join('\n\n');
-    });
-  }
-
-  function extractPptxText(file) {
-    if (typeof JSZip === 'undefined') return Promise.reject(new Error('PPTX library not loaded'));
-
-    return file.arrayBuffer().then(function(buffer) {
-      return JSZip.loadAsync(buffer).then(function(zip) {
-        const slideFiles = Object.keys(zip.files)
-          .filter(function(name) { return /^ppt\/slides\/slide\d+\.xml$/.test(name); })
-          .sort(function(a, b) {
-            const numA = parseInt(a.match(/slide(\d+)\.xml/)[1], 10);
-            const numB = parseInt(b.match(/slide(\d+)\.xml/)[1], 10);
-            return numA - numB;
-          });
-
-        const slideTextPromises = slideFiles.map(function(fileName, idx) {
-          return zip.files[fileName].async('string').then(function(xmlStr) {
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlStr, 'application/xml');
-            const textNodes = xmlDoc.getElementsByTagName('a:t');
-            let slideText = '';
-            for (let i = 0; i < textNodes.length; i++) {
-              slideText += textNodes[i].textContent + ' ';
-            }
-            return 'Slide ' + (idx + 1) + ':\n' + slideText.trim();
-          });
-        });
-
-        return Promise.all(slideTextPromises).then(function(slides) {
-          return slides.join('\n\n');
-        });
-      });
-    });
-  }
-
   filesInput.addEventListener('change', function() {
     const file = filesInput.files && filesInput.files[0];
     filesInput.value = '';
@@ -2775,11 +2724,6 @@
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
       /\.docx$/i.test(file.name);
-    const isCsv = file.type === 'text/csv' || /\.csv$/i.test(file.name);
-    const isXlsx = file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-      /\.xlsx$/i.test(file.name);
-    const isPptx = file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
-      /\.pptx$/i.test(file.name);
 
     if (isTxt) {
       const reader = new FileReader();
@@ -2790,21 +2734,6 @@
 
       reader.onerror = function() {
         addMessage("I couldn't read that text file. Please try again.", 'ai');
-      };
-
-      reader.readAsText(file);
-      return;
-    }
-
-    if (isCsv) {
-      const reader = new FileReader();
-
-      reader.onload = function() {
-        stageFileAttachment(file, String(reader.result), 'CSV');
-      };
-
-      reader.onerror = function() {
-        addMessage("I couldn't read that CSV file. Please try again.", 'ai');
       };
 
       reader.readAsText(file);
@@ -2839,36 +2768,8 @@
       return;
     }
 
-    if (isXlsx) {
-      extractXlsxText(file).then(function(text) {
-        if (!text || text.trim().length === 0) {
-          addMessage("I couldn't find any readable data in that spreadsheet.", 'ai');
-          return;
-        }
-        stageFileAttachment(file, text, 'XLSX');
-      }).catch(function(err) {
-        console.error('XLSX extraction failed:', err);
-        addMessage("I couldn't read that Excel file. Please try again.", 'ai');
-      });
-      return;
-    }
-
-    if (isPptx) {
-      extractPptxText(file).then(function(text) {
-        if (!text || text.trim().length === 0) {
-          addMessage("I couldn't find any readable text in that presentation.", 'ai');
-          return;
-        }
-        stageFileAttachment(file, text, 'PPTX');
-      }).catch(function(err) {
-        console.error('PPTX extraction failed:', err);
-        addMessage("I couldn't read that PowerPoint file. Please try again.", 'ai');
-      });
-      return;
-    }
-
     // Other file types aren't supported yet.
-    addMessage("I can read .txt, .csv, .pdf, .docx, .xlsx, and .pptx files, plus images, right now. Other file types aren't supported yet.", 'ai');
+    addMessage("I can read .txt, .pdf, and .docx files, plus images, right now. Other file types aren't supported yet.", 'ai');
   });
 
   // ---------- Voice input ----------
@@ -3291,4 +3192,101 @@
           const formatted = getFormattedDateTime(tzMatch.zone);
           const authoritativeContext =
             'Authoritative real-time data (use this exact information, do not say you lack real-time access): ' +
-            'The current date and time in ' + t
+            'The current date and time in ' + tzMatch.place + ' (' + tzMatch.zone + ') is ' + formatted + '.\n\n' +
+            'User\'s question: ' + text;
+
+          const baseMessages = buildMessagesForApi();
+          const messagesForApi = baseMessages.slice(0, baseMessages.length - 1).concat([
+            { role: 'user', content: authoritativeContext }
+          ]);
+
+          addThinkingBubble();
+          const tzResult = await performChatRequest(messagesForApi, null);
+
+          if (tzResult.ok) {
+            persistMessage(tzResult.accumulated, 'ai');
+          } else {
+            addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+          }
+          return;
+        }
+      }
+
+      // Text messages: three-tier classification decides how search is
+      // handled. The Search toggle still works as a manual override that
+      // forces a search regardless of the automatic checks below.
+      //
+      // A and B are checked FIRST and unconditionally — this is the fix:
+      // previously Category C (which includes a "short message, no
+      // question mark" rule) was checked first and could silently block
+      // short factual queries like "Lagos time" or "PSG score" from ever
+      // reaching the A/B checks or even the confidence fallback. Now C is
+      // only considered a hard "never search" classification when neither
+      // A nor B matched.
+      const categoryA = isCategoryA(text);
+      const categoryB = isCategoryB(text);
+      const isNeverSearch = !categoryA && !categoryB && isCategoryC(text);
+      const isForcedSearch = webSearchEnabled || categoryA || categoryB;
+
+      if (isForcedSearch) {
+        await runSearchAndRegenerate(text, thinkHarderForThisMessage, pluginsForThisMessage);
+        return;
+      }
+
+      // Category C (greetings, jokes, creative writing, translation, simple
+      // math) or anything unclassified — answer normally first (full
+      // streaming, no added delay).
+      addThinkingBubble();
+      const firstAttempt = await performChatRequest(buildMessagesForApi(), null, thinkHarderForThisMessage, pluginsForThisMessage);
+
+      if (!firstAttempt.ok) {
+        addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+        return;
+      }
+
+      if (!isNeverSearch && responseShowsUncertainty(firstAttempt.accumulated)) {
+        // Only messages outside Category C get the confidence-based
+        // fallback — Category C never searches, even if the answer happens
+        // to sound unsure (e.g. a joke or creative text).
+        // Discard the uncertain answer — it was never persisted, so just
+        // remove its bubble from view — then search and regenerate.
+        if (firstAttempt.aiBubble && firstAttempt.aiBubble.parentElement) {
+          firstAttempt.aiBubble.parentElement.remove();
+        }
+        await runSearchAndRegenerate(text, thinkHarderForThisMessage, pluginsForThisMessage);
+        return;
+      }
+
+      // Confident answer, or Category C — keep it as-is.
+      persistMessage(firstAttempt.accumulated, 'ai');
+
+    } catch (err) {
+      removeSearchingBubble();
+      removeThinkingBubble();
+      addMessage('Error: could not reach TenAI. Please try again.', 'ai');
+    } finally {
+      isWaiting = false;
+      sendBtn.disabled = false;
+      updateSendBtnState();
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  newChatBtn.addEventListener('click', startNewConversation);
+
+  initConversations();
+  updateSendBtnState();
+  input.focus();
+</script>
+
+</body>
+</html>
